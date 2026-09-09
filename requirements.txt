@@ -1,0 +1,65 @@
+# Video Clipper Dependencies (GPU Optimized)
+# Install with: pip install -r requirements.txt
+# NOTE: PyTorch+CUDA is installed by install.bat BEFORE this file runs.
+# Do NOT list torch/torchvision/torchaudio here — they come from the
+# PyTorch CUDA index (cu126) and pip will pull the CPU version from PyPI
+# if they appear in requirements.txt without --index-url.
+
+# --- Web Server ---
+flask>=3.0
+flask-cors>=4.0
+
+# --- Video Download ---
+yt-dlp>=2024.0
+
+# --- Transcription (faster-whisper replaces openai-whisper) ---
+faster-whisper>=1.0.0
+
+# --- AI Providers ---
+anthropic>=0.39.0
+google-genai>=1.0.0
+
+# --- Video/Image Processing (GPU Accelerated) ---
+# Install ONLY opencv-contrib-python (a strict superset of opencv-python with GUI
+# + CUDA/contrib modules). Do NOT also install opencv-python or
+# opencv-python-headless — they share the cv2/ folder, and a headless build
+# winning silently breaks cv2.namedWindow (the manual template CV screen).
+opencv-contrib-python>=4.9           # Required for CUDA modules (cudacodec, face detection) + GUI
+Pillow>=10.0
+ffmpeg-python>=0.2.0
+av>=11.0.0                           # Fast in-process video frame decoding
+scenedetect>=0.6.2                   # Content-adaptive scene cut detection
+
+# --- GPU Face / Person Detection & Tracking ---
+# RT-DETR-L (Ultralytics) is the default detector (FACE_BACKEND=rtdetr).
+# Pose-invariant person detection — no side-profile / back-of-head misses.
+# Weights drop into pipeline/models/weights/rtdetr-l.pt
+ultralytics>=8.3.0
+
+# InsightFace stays available as the legacy embedding-based backend
+# (set FACE_BACKEND=insightface in .env to re-enable).
+insightface>=0.7.3
+onnxruntime-gpu>=1.16.0              # GPU ONNX runtime for InsightFace
+
+# --- GPU Array Computing ---
+# CuPy for GPU-accelerated batch operations
+# Match your CUDA version: 
+#   CUDA 11.x → cupy-cuda11x
+#   CUDA 12.x → cupy-cuda12x (if available)
+cupy-cuda12x>=12.0.0                 # For CUDA 12.x (change to cupy-cuda11x for CUDA 11.x)
+
+# --- Audio Processing ---
+librosa>=0.10
+soundfile>=0.12
+
+# --- Speaker Diarization (optional; needs HF_TOKEN) ---
+# install.bat installs this only when HF_TOKEN=hf_... is present in .env.
+# pyannote.audio>=3.1.0
+
+# --- API Transcription Fallbacks (optional) ---
+requests>=2.28
+# smallestai>=0.1.0
+
+# --- Utilities ---
+python-dotenv>=1.0
+numpy>=1.24                           # Compatible with modern CuPy 14.x and Pyannote

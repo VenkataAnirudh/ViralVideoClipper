@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip Branding Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="icon-chip">🎬</div>
+    <div class="t"><b>Branding Studio</b></div>
+    <span class="badge">post-caption finisher</span>
+  </div>
+  <div class="spacer"></div>
+  <select id="jobSel" title="Job"></select>
+  <button class="tbtn" id="reloadJobs" title="Reload jobs">↻ Jobs</button>
+  <select id="variantSel" title="Input variant">
+    <option value="captioned">captioned (plain)</option>
+    <option value="hooked">captioned + hook intro</option>
+  </select>
+</div>
+
+<div class="wrap">
+
+  <!-- ════ LEFT: clip gallery + bulk tools ════ -->
+  <div class="col">
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">🎞️</div> Captioned clips <span class="count pill" id="clipCount">0</span></div>
+
+      <div class="bulkbar">
+        <div class="seg">
+          <button class="tbtn" id="selAll">Select all</button>
+          <button class="tbtn" id="selNone">None</button>
+          <button class="tbtn" id="selInvert">Invert</button>
+        </div>
+        <span class="pill" id="selCount">0 selected</span>
+        <div class="spacer"></div>
+        <button class="tbtn" id="applyToggle">Apply to selected ▾</button>
+        <label class="chk sm" title="When on, Run/Dry-run only renders the selected clips"><input type="checkbox" id="limitSel" checked> Render selected only</label>
+      </div>
+
+      <div class="applybox" id="applyBox">
+        <div class="lab">Apply to the selected clips</div>
+        <div class="btnrow" style="margin-bottom:10px">
+          <button class="tbtn" data-bulk="banner:1">Banner ✓</button>
+          <button class="tbtn" data-bulk="banner:0">Banner ✗</button>
+          <button class="tbtn" data-bulk="logo:1">Logo ✓</button>
+          <button class="tbtn" data-bulk="logo:0">Logo ✗</button>
+          <button class="tbtn" data-bulk="skip:1">Skip ✓</button>
+          <button class="tbtn" data-bulk="skip:0">Skip ✗</button>
+          <button class="tbtn" data-bulk="clear">Clear overrides</button>
+        </div>
+        <div class="row3">
+          <div class="field" style="margin:0"><input type="text" id="applyMusPath" placeholder="music path / track"></div>
+          <div class="field" style="margin:0"><input type="number" id="applyMusVol" placeholder="vol 0-1" step="0.01" min="0" max="1"></div>
+          <div class="field" style="margin:0"><input type="number" id="applyMusOff" placeholder="offset s" step="1"></div>
+        </div>
+        <div class="btnrow" style="margin-top:10px">
+          <button class="tbtn" id="applyMusBtn">Apply music to selected</button>
+        </div>
+      </div>
+
+      <div class="clips" id="clips"></div>
+    </div>
+  </div>
+
+  <!-- ════ RIGHT: settings ════ -->
+  <div class="col">
+
+    <!-- Output -->
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">📤</div> Output</div>
+      <div class="row">
+        <div class="field"><label class="form-label">Encoder</label>
+          <select id="encoder"><option value="x264">x264 (safe)</option><option value="nvenc">NVENC (GPU)</option></select></div>
+        <div class="field"><label class="form-label">Safe-zone platform</label>
+          <select id="szPlatform"><option>reels</option><option>tiktok</option><option>shorts</option><option>none</option></select></div>
+      </div>
+      <div class="field"><label class="chk"><input type="checkbox" id="szEnabled"> Keep overlays inside platform safe zones</label></div>
+      <div class="row">
+        <div class="field"><label class="form-label">Output tag (filename suffix)</label>
+          <input type="text" id="outputTag" placeholder="bckg"></div>
+        <div class="field"><label class="form-label">Render only (clip #s)</label>
+          <input type="text" id="onlyClips" placeholder="e.g. 1,2,3 — blank = all"></div>
+      </div>
+      <div class="hint">Outputs save to <code>clips/branded/clip_NN_&lt;tag&gt;.mp4</code> — change the tag to keep separate variants (e.g. <code>bckg</code> vs <code>nomusic</code>). “Render selected only” (left) overrides the clip-# box.</div>
+    </div>
+
+    <!-- Logo -->
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">🏷️</div> Logo
+        <label class="chk hd-toggle"><input type="checkbox" id="logoEnabled"> Enable</label></div>
+      <div class="field"><label class="form-label">Logo image path</label>
+        <div class="uprow"><input type="text" id="logoPath" placeholder="assets/...png or absolute path">
+          <input type="file" id="logoFile" accept="image/*" style="display:none">
+          <button class="btn btn-ghost" type="button" onclick="document.getElementById('logoFile').click()">Upload</button></div></div>
+      <div class="row">
+        <div class="field"><label class="form-label">Position</label>
+          <select id="logoPos">
+            <option value="top_right">top_right</option><option value="top_left">top_left</option>
+            <option value="bottom_right">bottom_right</option><option value="bottom_left">bottom_left</option></select></div>
+        <div class="field"><div class="range-row"><label class="form-label" style="margin:0">Size (% width)</label><span class="range-val" id="logoScaleVal">8</span></div>
+          <input type="range" id="logoScale" min="1" max="30" step="0.5"></div>
+      </div>
+      <div class="hint">The logo is pinned to its corner — only <i>Margin</i> (default 1%) adds a gap. Platform safe zones never push it inward.</div>
+      <details class="adv"><summary>Advanced logo</summary><div class="body">
+        <div class="row3">
+          <div class="field" style="margin:0"><label class="form-label">Margin (% width)</label><input type="number" id="logoMargin" step="0.5"></div>
+          <div class="field" style="margin:0"><div class="range-row"><label class="form-label" style="margin:0">Opacity</label><span class="range-val" id="logoOpacityVal">1</span></div>
+            <input type="range" id="logoOpacity" min="0" max="1" step="0.05"></div>
+          <div class="field" style="margin:0"><label class="form-label">Fade-in (s)</label><input type="number" id="logoFade" step="0.1"></div>
+        </div>
+      </div></details>
+    </div>
+
+    <!-- Hook banner -->
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">📢</div> Hook banner
+        <label class="chk hd-toggle"><input type="checkbox" id="banEnabled"> Enable</label></div>
+      <div class="hint" style="margin-top:0;margin-bottom:14px">Golden chip from each clip's hook phrase (edit per clip on the left). Placement avoids the face &amp; burnt subtitles. Doubles as the thumbnail.</div>
+      <div class="row">
+        <div class="field"><label class="form-label">Text source (default)</label>
+          <select id="banSrc"><option value="hook_phrase">Hook phrase (from plan)</option><option value="youtube_title">YouTube title</option></select></div>
+        <div class="field"><label class="form-label">Placement</label>
+          <select id="banPlace"><option value="subtitle">Subtitle slot (recommended)</option><option value="auto">Auto (face + subtitle aware)</option><option value="top">Top</option><option value="mid">Mid-gap</option><option value="bottom">Below subtitles</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label class="form-label">Color</label><input type="color" id="banColor" value="#FFC83D"></div>
+        <div class="field"><label class="form-label">Font</label><select id="banFont"></select></div>
+      </div>
+      <details class="adv"><summary>Advanced banner</summary><div class="body">
+        <div class="row">
+          <div class="field" style="margin:0"><label class="form-label">Font (% height)</label><input type="number" id="banFontPct" step="0.5"></div>
+          <div class="field" style="margin:0"><label class="form-label">Duration (s)</label><input type="number" id="banDur" step="0.5"></div>
+        </div>
+        <div class="chk-grid">
+          <label class="chk sm"><input type="checkbox" id="banBorder"> Rounded border</label>
+          <label class="chk sm"><input type="checkbox" id="banUpper"> UPPERCASE</label>
+        </div>
+      </div></details>
+    </div>
+
+    <!-- TTS hook intro -->
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">🗣️</div> TTS hook intro
+        <label class="chk hd-toggle"><input type="checkbox" id="ttsEnabled"> Enable</label></div>
+      <div class="hint" style="margin-top:0;margin-bottom:10px">Generates the spoken hook intro (same voice / bass / tail settings as the main pipeline's config.py) for any clip missing a <i>*_hooked</i> variant and prepends it before branding. The banner chip auto-disables on hooked clips so the text never doubles.</div>
+      <label class="chk sm"><input type="checkbox" id="ttsRegen"> Regenerate even if a hook already exists</label>
+    </div>
+
+    <!-- Background music -->
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">🎵</div> Background music
+        <label class="chk hd-toggle"><input type="checkbox" id="musEnabled"> Enable</label></div>
+      <div class="row">
+        <div class="field"><label class="form-label">Source</label>
+          <select id="musSource"><option value="folder">Folder (library)</option><option value="single">Single file</option><option value="youtube">YouTube link</option></select></div>
+        <div class="field"><label class="form-label">Assignment</label>
+          <select id="musAssign"><option value="same">Same for all clips</option><option value="random">Random per clip</option><option value="roundrobin">Round-robin</option></select></div>
+      </div>
+      <div class="field"><div class="range-row"><label class="form-label" style="margin:0">Volume</label><span class="range-val" id="musVolVal">15%</span></div>
+        <input type="range" id="musVol" min="0" max="1" step="0.01"></div>
+      <div class="row">
+        <div class="field"><label class="form-label">Start point</label>
+          <select id="musSeg"><option value="fixed">From offset (0 = track start)</option><option value="loudness">Loudness auto-pick</option></select></div>
+        <div class="field"><label class="form-label">Offset (s)</label><input type="number" id="musFixed" step="1" min="0"></div>
+      </div>
+      <div class="chk-grid">
+        <label class="chk sm"><input type="checkbox" id="musDuck"> Duck under speech (sidechain)</label>
+        <label class="chk sm"><input type="checkbox" id="musLoud"> Normalize to −14 LUFS</label>
+      </div>
+      <div class="hint">Music fades in/out automatically (0.6s). Per-clip track/volume/offset overrides live on each clip card.</div>
+      <details class="adv"><summary>Advanced music (source paths)</summary><div class="body">
+        <div class="field" style="margin:0"><label class="form-label">Folder of tracks</label><input type="text" id="musFolder" placeholder="music/viral"></div>
+        <div class="field" style="margin:0"><label class="form-label">Single / uploaded file</label>
+          <div class="uprow"><input type="text" id="musSingle" placeholder="path to a track">
+            <input type="file" id="musFile" accept="audio/*" style="display:none">
+            <button class="btn btn-ghost" type="button" onclick="document.getElementById('musFile').click()">Upload</button></div></div>
+        <div class="field" style="margin:0"><label class="form-label">YouTube music link</label><input type="url" id="musYt" placeholder="https://..."></div>
+        <div class="field" style="margin:0;display:flex;align-items:flex-end"><label class="chk sm"><input type="checkbox" id="musNoRepeat"> No back-to-back repeat</label></div>
+      </div></details>
+    </div>
+
+    <!-- Extra upgrades -->
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">✨</div> Extra upgrades</div>
+
+      <div class="field"><label class="chk"><input type="checkbox" id="cgEnabled"> Color grade</label>
+        <div class="row3" style="margin-top:10px">
+          <div><label class="form-label">Contrast</label><input type="number" id="cgContrast" step="0.01"></div>
+          <div><label class="form-label">Saturation</label><input type="number" id="cgSat" step="0.01"></div>
+          <div><label class="form-label">Sharpen</label><input type="number" id="cgSharp" step="0.05"></div>
+        </div></div>
+      <hr>
+      <div class="field"><label class="chk"><input type="checkbox" id="piEnabled"> Hook punch-in (subtle zoom)</label>
+        <div class="row" style="margin-top:10px">
+          <div><label class="form-label">Amount</label><input type="number" id="piAmt" step="0.01"></div>
+          <div><label class="form-label">Duration (s)</label><input type="number" id="piDur" step="0.5"></div>
+        </div></div>
+      <hr>
+      <div class="field"><label class="chk"><input type="checkbox" id="pbEnabled"> Retention progress bar</label>
+        <div class="row" style="margin-top:10px">
+          <div><label class="form-label">Height (% height)</label><input type="number" id="pbH" step="0.1"></div>
+          <div><label class="form-label">Color</label><input type="text" id="pbColor"></div>
+        </div></div>
+      <hr>
+      <div class="field"><label class="chk"><input type="checkbox" id="wmEnabled"> @handle watermark</label>
+        <div class="row3" style="margin-top:10px">
+          <div><label class="form-label">Text</label><input type="text" id="wmText"></div>
+          <div><label class="form-label">Font</label><select id="wmFont"></select></div>
+          <div><label class="form-label">Position</label>
+            <select id="wmPos"><option value="bottom_left">bottom_left</option><option value="bottom_right">bottom_right</option><option value="top_left">top_left</option><option value="top_right">top_right</option></select></div>
+        </div></div>
+      <hr>
+      <div class="field"><label class="chk"><input type="checkbox" id="ecEnabled"> End CTA freeze-frame</label>
+        <div class="row3" style="margin-top:10px">
+          <div><label class="form-label">Text</label><input type="text" id="ecText"></div>
+          <div><label class="form-label">Duration (s)</label><input type="number" id="ecDur" step="0.1"></div>
+          <div><label class="form-label">Font</label><select id="ecFont"></select></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div><div class="range-row"><label class="form-label" style="margin:0">Music swell during end card</label><span class="range-val" id="ecSwellVal">50%</span></div>
+            <input type="range" id="ecSwell" min="0" max="1" step="0.05"></div>
+          <div class="hint" style="margin:0;align-self:end">Music rises from its normal volume to this level over the card.</div>
+        </div></div>
+      <hr>
+      <div class="chk-grid">
+        <label class="chk"><input type="checkbox" id="thEnabled"> Export cover / thumbnail</label>
+        <label class="chk"><input type="checkbox" id="ukEnabled"> Write per-clip upload kit (.txt)</label>
+      </div>
+      <div class="field" style="margin-top:10px"><label class="form-label">Thumbnail at</label><input type="text" id="thAt" placeholder="hook | middle | seconds"></div>
+    </div>
+
+    <!-- Run -->
+    <div class="card">
+      <div class="card-hd"><div class="icon-chip">▶️</div> Run &amp; export</div>
+      <div class="chk-grid" style="margin-bottom:12px">
+        <label class="chk"><input type="checkbox" id="drEnabled"> Dry-run (first N seconds only)</label>
+        <div style="display:flex;align-items:center;gap:8px"><span class="form-label" style="margin:0">Dry-run secs</span><input type="number" id="drSec" step="1" style="width:90px"></div>
+      </div>
+      <div class="btnrow">
+        <button class="btn btn-primary" id="runBtn" style="flex:1">▶ Run branding</button>
+        <button class="btn btn-orange" id="dryBtn">⚡ Dry-run</button>
+        <button class="btn btn-ghost" id="saveBtn">💾 Save</button>
+        <button class="btn btn-ghost" id="loadBtn">↺ Load</button>
+      </div>
+      <div class="progress" style="margin-top:14px"><div id="bar"></div></div>
+      <div class="progtext" id="progText">idle</div>
+      <div class="log" id="log"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const escA = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/"/g,"&quot;")
+  .replace(/</g,"&lt;").replace(/>/g,"&gt;");
+let JOB = "", CLIPS = [], OVR = {}, FONTS = [];
+const SEL = new Set();
+
+// ── declarative field map: [config-path, element-id, kind] ───────────────────
+const FIELDS = [
+  ["encoder","encoder","select"], ["input_variant","variantSel","select"],
+  ["output_tag","outputTag","text"], ["render_selected_only","limitSel","bool"],
+  ["safe_zones.enabled","szEnabled","bool"], ["safe_zones.platform","szPlatform","select"],
+  ["logo.enabled","logoEnabled","bool"], ["logo.path","logoPath","text"],
+  ["logo.scale_pct","logoScale","num"], ["logo.margin_pct","logoMargin","num"],
+  ["logo.opacity","logoOpacity","num"], ["logo.fade_in","logoFade","num"], ["logo.position","logoPos","select"],
+  ["banner.enabled","banEnabled","bool"], ["banner.text_source","banSrc","select"],
+  ["banner.font","banFont","select"], ["banner.color","banColor","text"],
+  ["banner.border","banBorder","bool"], ["banner.placement","banPlace","select"],
+  ["banner.duration","banDur","num"], ["banner.font_pct","banFontPct","num"],
+  ["banner.uppercase","banUpper","bool"],
+  ["tts_hook.enabled","ttsEnabled","bool"], ["tts_hook.regenerate","ttsRegen","bool"],
+  ["music.enabled","musEnabled","bool"], ["music.source","musSource","select"],
+  ["music.folder","musFolder","text"], ["music.single_path","musSingle","text"],
+  ["music.youtube_url","musYt","text"], ["music.assignment","musAssign","select"],
+  ["music.segment_mode","musSeg","select"], ["music.fixed_offset","musFixed","num"],
+  ["music.volume","musVol","num"],
+  ["music.end_ramp_volume","ecSwell","num"],
+  ["music.no_repeat_consecutive","musNoRepeat","bool"],
+  ["music.duck","musDuck","bool"], ["music.loudnorm","musLoud","bool"],
+  ["color_grade.enabled","cgEnabled","bool"], ["color_grade.contrast","cgContrast","num"],
+  ["color_grade.saturation","cgSat","num"], ["color_grade.sharpen","cgSharp","num"],
+  ["punch_in.enabled","piEnabled","bool"], ["punch_in.amount","piAmt","num"], ["punch_in.duration","piDur","num"],
+  ["progress_bar.enabled","pbEnabled","bool"], ["progress_bar.height_pct","pbH","num"], ["progress_bar.color","pbColor","text"],
+  ["watermark.enabled","wmEnabled","bool"], ["watermark.text","wmText","text"],
+  ["watermark.font","wmFont","select"], ["watermark.position","wmPos","select"],
+  ["end_card.enabled","ecEnabled","bool"], ["end_card.text","ecText","text"],
+  ["end_card.duration","ecDur","num"], ["end_card.font","ecFont","select"],
+  ["thumbnail.enabled","thEnabled","bool"], ["thumbnail.at","thAt","text"],
+  ["upload_kit.enabled","ukEnabled","bool"],
+  ["dry_run.enabled","drEnabled","bool"], ["dry_run.seconds","drSec","num"],
+];
+
+// value chips for range sliders (volume-style sliders display as %)
+const RANGES = [["logoScale","logoScaleVal"],["logoOpacity","logoOpacityVal"],["musVol","musVolVal"],["ecSwell","ecSwellVal"]];
+const PCT = new Set(["musVol","ecSwell"]);
+function syncRanges(){ RANGES.forEach(([id,chip])=>{ const el=$(id),c=$(chip);
+  if(el&&c) c.textContent = PCT.has(id) ? Math.round(parseFloat(el.value||0)*100)+"%" : el.value; }); }
+RANGES.forEach(([id])=>{ const el=$(id); if(el) el.addEventListener("input",syncRanges); });
+
+const getP=(o,p)=>p.split(".").reduce((a,k)=>(a==null?undefined:a[k]),o);
+const setP=(o,p,v)=>{const ks=p.split("."),last=ks.pop();let c=o;ks.forEach(k=>c=c[k]=c[k]||{});c[last]=v;};
+
+function applyConfig(cfg){
+  FIELDS.forEach(([path,id,kind])=>{
+    const el=$(id); if(!el) return; const v=getP(cfg,path);
+    if(v===undefined) return;
+    if(kind==="bool") el.checked=!!v; else el.value=v;
+  });
+  // legacy values whose options were removed from the UI (engine still honors
+  // them; the closest live option is shown instead)
+  if(getP(cfg,"music.source")==="upload") $("musSource").value="single";
+  if(getP(cfg,"music.assignment")==="perclip") $("musAssign").value="random";
+  if(getP(cfg,"music.segment_mode")==="multipart") $("musSeg").value="loudness";
+  OVR = cfg.clips || {};
+  $("onlyClips").value = Array.isArray(cfg.only_clips) ? cfg.only_clips.join(",") : (cfg.only_clips||"");
+  syncRanges();
+  renderClips();
+}
+function collectConfig(){
+  const cfg={clips:{}};
+  FIELDS.forEach(([path,id,kind])=>{
+    const el=$(id); if(!el) return;
+    let v; if(kind==="bool") v=el.checked; else if(kind==="num") v=parseFloat(el.value); else v=el.value;
+    if(kind==="num" && isNaN(v)) return;
+    setP(cfg,path,v);
+  });
+  cfg.clips = OVR;
+  cfg.only_clips = ($("onlyClips").value||"").split(/[,\s]+/).filter(Boolean);
+  return cfg;
+}
+
+function logLine(t){const l=$("log"); l.textContent+=t+"\n"; l.scrollTop=l.scrollHeight;}
+
+async function loadJobs(){
+  const j=await (await fetch("/api/jobs")).json();
+  const sel=$("jobSel"); sel.innerHTML="";
+  j.forEach(x=>{const o=document.createElement("option");o.value=x.name;
+    o.textContent=`${x.name}  (${x.captioned} clips)`; sel.appendChild(o);});
+  if(j.length){ JOB=j[0].name; await onJob(); }
+}
+async function loadFonts(){
+  FONTS=await (await fetch("/api/fonts")).json();
+  ["banFont","wmFont","ecFont"].forEach(id=>{
+    const s=$(id); const cur=s.value; s.innerHTML="";
+    FONTS.forEach(f=>{const o=document.createElement("option");o.value=f.path;o.textContent=f.name;s.appendChild(o);});
+    if(cur) s.value=cur;
+  });
+}
+async function onJob(){
+  JOB=$("jobSel").value;
+  const cfg=await (await fetch("/api/config?job="+encodeURIComponent(JOB))).json();
+  await loadFonts();
+  applyConfig(cfg);
+  await loadClips();
+}
+async function loadClips(){
+  const v=$("variantSel").value;
+  CLIPS=await (await fetch(`/api/clips?job=${encodeURIComponent(JOB)}&variant=${v}`)).json();
+  $("clipCount").textContent=CLIPS.length;
+  SEL.clear();
+  renderClips();
+}
+function ovr(name){ OVR[name]=OVR[name]||{}; return OVR[name]; }
+
+function updateSelCount(){
+  $("selCount").textContent=`${SEL.size} selected`;
+  $("selCount").classList.toggle("on", SEL.size>0);
+  document.querySelectorAll(".clip").forEach(div=>{
+    div.classList.toggle("sel", SEL.has(div.dataset.name));
+  });
+}
+
+function renderClips(){
+  const box=$("clips"); box.innerHTML="";
+  CLIPS.forEach(c=>{
+    const o=OVR[c.clip_name]||{};
+    const src=`/api/file?job=${encodeURIComponent(JOB)}&rel=${encodeURIComponent(c.file)}`;
+    const hookVal = (o.banner_text!==undefined ? o.banner_text : (c.hook_phrase||""));
+    const div=document.createElement("div"); div.className="clip"; div.dataset.name=c.clip_name;
+    if(SEL.has(c.clip_name)) div.classList.add("sel");
+    div.innerHTML=`
+      <div class="selbox"><input type="checkbox" class="selchk" ${SEL.has(c.clip_name)?"checked":""}></div>
+      <video src="${src}" controls preload="metadata" muted></video>
+      <div class="meta">
+        <div class="nm"><b>${escA(c.clip_name)}</b> <span class="pill">${c.duration||"?"}s</span></div>
+        <label class="form-label">🪝 Banner text (editable)</label>
+        <input type="text" class="bantxt" data-k="banner_text" placeholder="hook phrase" value="${escA(hookVal)}">
+        <div class="ctrls">
+          <label class="chk sm"><input type="checkbox" data-k="banner" ${o.banner===false?"":"checked"}> banner</label>
+          <label class="chk sm"><input type="checkbox" data-k="logo" ${o.logo===false?"":"checked"}> logo</label>
+          <label class="chk sm"><input type="checkbox" data-k="skip" ${o.skip?"checked":""}> skip</label>
+        </div>
+        <div class="ovr">
+          <input type="text" data-k="music_path" placeholder="music override path" value="${escA(o.music_path||"")}">
+          <input type="number" data-k="music_volume" placeholder="vol" value="${o.music_volume??""}">
+          <input type="number" data-k="music_offset" placeholder="offset" value="${o.music_offset??""}">
+        </div>
+        <label class="form-label" style="margin-top:8px">✂ End trim — frame-accurate (empty = full length)</label>
+        <input type="range" class="trimrange" min="1" max="${c.duration||60}" step="0.001" value="${o.trim_end_s??(c.duration||60)}">
+        <div class="ovr">
+          <input type="number" data-k="trim_end_s" step="0.001" min="3" placeholder="full" value="${o.trim_end_s??""}">
+          <button type="button" class="btn btn-ghost tfm" data-tf="-1">−1f</button>
+          <button type="button" class="btn btn-ghost tfm" data-tf="1">+1f</button>
+          <button type="button" class="btn btn-ghost tset" title="use the player's current position">⟵ player</button>
+          <button type="button" class="btn btn-ghost tclear" title="remove the trim — render full length">✕ full</button>
+        </div>
+      </div>`;
+    // selection checkbox
+    div.querySelector(".selchk").addEventListener("change",e=>{
+      if(e.target.checked) SEL.add(c.clip_name); else SEL.delete(c.clip_name);
+      updateSelCount();
+    });
+    // ── frame-accurate end trim ──
+    const vid=div.querySelector("video");
+    const range=div.querySelector(".trimrange");
+    const num=div.querySelector('[data-k="trim_end_s"]');
+    vid.addEventListener("loadedmetadata",()=>{
+      if(isFinite(vid.duration)&&vid.duration>0){
+        range.max=vid.duration.toFixed(3);
+        if(num.value==="") range.value=range.max;
+      }
+    });
+    let clipFps=0;
+    async function getFps(){
+      if(clipFps) return clipFps;
+      try{
+        const r=await (await fetch(`/api/probe?job=${encodeURIComponent(JOB)}&rel=${encodeURIComponent(c.file)}`)).json();
+        clipFps=r.fps||30;
+      }catch(e){ clipFps=30; }
+      return clipFps;
+    }
+    function previewTrim(v){   // live scrub: show the frame, do NOT save an override
+      const max=parseFloat(range.max)||v;
+      v=Math.max(1,Math.min(v,max));
+      num.value=v.toFixed(3);
+      try{ vid.currentTime=Math.max(0,v-0.001); }catch(e){}
+    }
+    function clearTrim(say){
+      const ob=OVR[c.clip_name]; if(ob) delete ob.trim_end_s;
+      num.value=""; range.value=range.max;
+      if(say) logLine(`${c.clip_name}: end trim cleared — full length.`);
+    }
+    function setTrim(v){
+      const max=parseFloat(range.max)||v;
+      v=Math.max(1,Math.min(v,max));
+      if(v>=max-0.05){ clearTrim(false); return; }   // slider parked at the end = full length
+      num.value=v.toFixed(3);
+      range.value=v;
+      ovr(c.clip_name).trim_end_s=parseFloat(v.toFixed(3));
+      try{ vid.currentTime=Math.max(0,v-0.001); }catch(e){}   // show the exact ending frame
+    }
+    // input = preview only; change (drag released) = commit. A stray drag can
+    // no longer silently save a 1-second trim (the old 3s-render foot-gun).
+    range.addEventListener("input",()=>previewTrim(parseFloat(range.value)));
+    range.addEventListener("change",()=>setTrim(parseFloat(range.value)));
+    div.querySelectorAll(".tfm").forEach(b=>b.addEventListener("click",async()=>{
+      const f=await getFps();
+      const cur=parseFloat(num.value)||parseFloat(range.max)||0;
+      setTrim(cur+parseInt(b.dataset.tf)/f);
+    }));
+    div.querySelector(".tset").addEventListener("click",()=>{ if(vid.currentTime>0) setTrim(vid.currentTime); });
+    div.querySelector(".tclear").addEventListener("click",()=>clearTrim(true));
+    // per-clip override fields
+    div.querySelectorAll("[data-k]").forEach(el=>{
+      el.addEventListener("change",()=>{
+        const k=el.dataset.k, ob=ovr(c.clip_name);
+        if(el.type==="checkbox"){
+          if(k==="skip") ob.skip=el.checked; else ob[k]=el.checked;
+        } else if(el.type==="number"){
+          if(el.value==="") delete ob[k]; else ob[k]=parseFloat(el.value);
+        } else { if(el.value==="") delete ob[k]; else ob[k]=el.value; }
+      });
+    });
+    box.appendChild(div);
+  });
+  updateSelCount();
+}
+
+// ── bulk selection ───────────────────────────────────────────────────────
+function selectedNames(){ return CLIPS.map(c=>c.clip_name).filter(n=>SEL.has(n)); }
+$("selAll").onclick =()=>{ CLIPS.forEach(c=>SEL.add(c.clip_name)); renderClips(); };
+$("selNone").onclick=()=>{ SEL.clear(); renderClips(); };
+$("selInvert").onclick=()=>{ CLIPS.forEach(c=>{ SEL.has(c.clip_name)?SEL.delete(c.clip_name):SEL.add(c.clip_name); }); renderClips(); };
+$("applyToggle").onclick=()=>{ $("applyBox").classList.toggle("show"); };
+
+function applyBulk(action){
+  const names=selectedNames();
+  if(!names.length){ logLine("No clips selected."); return; }
+  names.forEach(n=>{
+    const ob=ovr(n);
+    if(action==="clear"){ delete OVR[n]; return; }
+    const [k,val]=action.split(":");
+    if(k==="banner"||k==="logo") ob[k]=(val==="1");
+    else if(k==="skip") ob.skip=(val==="1");
+  });
+  logLine(`Applied "${action}" to ${names.length} clip(s).`);
+  renderClips();
+}
+document.querySelectorAll("[data-bulk]").forEach(b=>b.addEventListener("click",()=>applyBulk(b.dataset.bulk)));
+$("applyMusBtn").onclick=()=>{
+  const names=selectedNames();
+  if(!names.length){ logLine("No clips selected."); return; }
+  const path=$("applyMusPath").value.trim();
+  const vol=$("applyMusVol").value, off=$("applyMusOff").value;
+  names.forEach(n=>{
+    const ob=ovr(n);
+    if(path) ob.music_path=path;
+    if(vol!=="") ob.music_volume=parseFloat(vol);
+    if(off!=="") ob.music_offset=parseFloat(off);
+  });
+  logLine(`Applied music override to ${names.length} clip(s).`);
+  renderClips();
+};
+
+// ── uploads ──────────────────────────────────────────────────────────────
+async function upload(kind, file){
+  const fd=new FormData(); fd.append("file",file);
+  const r=await fetch(`/api/upload?job=${encodeURIComponent(JOB)}&kind=${kind}`,{method:"POST",body:fd});
+  return (await r.json());
+}
+$("logoFile").addEventListener("change",async e=>{
+  if(!e.target.files[0])return; const r=await upload("logo",e.target.files[0]);
+  $("logoPath").value=r.rel; logLine("Logo uploaded: "+r.rel);
+});
+$("musFile").addEventListener("change",async e=>{
+  if(!e.target.files[0])return; const r=await upload("music",e.target.files[0]);
+  $("musSingle").value=r.rel; $("musSource").value="single"; logLine("Music uploaded: "+r.rel);
+});
+
+// ── config + run ───────────────────────────────────────────────────────────
+async function saveConfig(){
+  const r=await fetch("/api/config?job="+encodeURIComponent(JOB),
+    {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collectConfig())});
+  logLine((await r.json()).ok?"Config saved.":"Save failed.");
+}
+async function loadSaved(){
+  const cfg=await (await fetch("/api/config?job="+encodeURIComponent(JOB))).json();
+  applyConfig(cfg); logLine("Loaded saved config.");
+}
+let POLL=null;
+async function run(dry){
+  const cfg=collectConfig();
+  cfg.dry_run=cfg.dry_run||{}; cfg.dry_run.enabled=dry||cfg.dry_run.enabled;
+  // "Render selected only" overrides the clip-# box — and never silently
+  // falls back to rendering everything when nothing is ticked.
+  if($("limitSel").checked){
+    if(!SEL.size){
+      logLine("⚠ 'Render selected only' is ON but no clips are ticked. Select clips on the left, or untick it to use the clip-# box / render all.");
+      return;
+    }
+    cfg.only_clips=selectedNames();
+  }
+  $("runBtn").disabled=$("dryBtn").disabled=true;
+  const scope = cfg.only_clips && cfg.only_clips.length ? ` (${cfg.only_clips.length} clip(s))` : "";
+  logLine((dry?"Starting DRY-RUN":"Starting branding run")+scope+"…");
+  const r=await fetch("/api/run?job="+encodeURIComponent(JOB),
+    {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
+  const j=await r.json();
+  if(!j.ok){ logLine("Could not start: "+(j.error||"")); $("runBtn").disabled=$("dryBtn").disabled=false; return; }
+  POLL=setInterval(poll,1000);
+}
+async function poll(){
+  const p=await (await fetch("/api/progress?job="+encodeURIComponent(JOB))).json();
+  const pct=p.n?Math.round(p.i/p.n*100):0;
+  $("bar").style.width=pct+"%"; $("progText").textContent=`${p.i}/${p.n} — ${p.msg}`;
+  if(!p.running){
+    clearInterval(POLL); $("runBtn").disabled=$("dryBtn").disabled=false;
+    if(p.summary) logLine(`Done: ${p.summary.done}/${p.summary.total} ok, ${p.summary.failed} failed → ${p.summary.out_dir}`);
+    else logLine(p.msg);
+  }
+}
+
+$("reloadJobs").onclick=loadJobs;
+$("jobSel").onchange=onJob;
+$("variantSel").onchange=loadClips;
+$("saveBtn").onclick=saveConfig;
+$("loadBtn").onclick=loadSaved;
+$("runBtn").onclick=()=>run(false);
+$("dryBtn").onclick=()=>run(true);
+
+loadJobs();
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+# Secrets
+.env
+.env.*
+cookies.txt
+*.key
+*.pem
+
+# Python caches and venv
+venv/
+.venv/
+venv1/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# System and logs
+*.log
+*.part
+outputs/*
+!outputs/.gitkeep
+music/*
+!music/.gitkeep
+assets/audio/*
+!assets/audio/.gitkeep
+assets/fonts/*
+!assets/fonts/.gitkeep
+
+# Exclude binaries / tools
+ffmpeg-bin/
+ffmpeg-gpu/
+.claude/
+.feather_agent/
+.uv-cache/

@@ -1,0 +1,1312 @@
+================================================================================
+VIDEO CLIPPER - COMPLETE CURRENT ARCHITECTURE AND WORKFLOW
+================================================================================
+
+Document status
+---------------
+This document was rebuilt from the current source code on 2026-06-06. It is
+intended to be readable by a new developer who has no prior knowledge of video
+processing, speech recognition, AI APIs, FFmpeg, face tracking, or this project.
+
+The source code is the authority. This document describes the current working
+behavior, including recent changes, fallbacks, intermediate files, UI controls,
+fonts, libraries, and resume behavior.
+
+IMPORTANT STAGE-NUMBERING NOTE
+------------------------------
+The repository has two useful ways of describing the pipeline:
+
+1. This architecture document uses nine CONCEPTUAL stages:
+   1. Download and pre-processing
+   2. Audio transcription
+   3. Diarization and speaker identity
+   4. AI analysis and clip selection
+   5. Boundary alignment and raw extraction
+   6. Speaker tracking and vertical cropping
+   7. TTS hooks, captioning, and music
+   8. Social copywriting and blogging
+   9. UI, editing, resume, and packaging
+
+2. pipeline/runner.py exposes nine PROGRESS stages:
+   downloading, transcribing, analyzing, selecting, extracting, captioning,
+   copywriting, blogging, and packaging.
+
+These are not contradictory. Conceptual Stage 3 is now mostly nested inside the
+extraction/CV stage rather than running as a mandatory top-level runner stage.
+Conceptual Stages 5 and 6 are both performed inside the runner's "extracting"
+stage. TTS hooks are an optional "Stage 5b" between extraction and captioning.
+
+HIGH-LEVEL DATA FLOW
+--------------------
+URL
+  -> meta.json + audio.wav
+  -> background full-video download and optional H.264 conversion
+  -> transcript.json
+  -> analysis.json and candidate text files
+  -> clips_plan.json and alignment_report.json
+  -> clips/clip_XX_raw.mp4
+  -> optional clips/clip_XX_hooked.mp4
+  -> clips/clip_XX_captioned_<style>.mp4
+  -> social_copy.json and optional blog files
+  -> results.json consumed by the web dashboard
+
+JOB DIRECTORY MODEL
+-------------------
+Every run begins in outputs/<temporary_job_id>. After metadata is known, the
+runner tries to rename it to:
+
+    outputs/Video <number> - <sanitized video title>
+
+The title is stripped of Windows-invalid filename characters and limited to 50
+characters. The job directory normally contains:
+
+  .job_id                    Original and retry/resume job identifiers
+  job_settings.json          Effective settings selected in the UI
+  debug.log                  Durable, per-job diagnostic log
+  stage_state.json           Stage inputs, outputs, fingerprints, and counts
+  meta.json                  Source metadata and source video filename
+  audio.wav                  16 kHz mono PCM transcription audio
+  transcript.json            Timed transcript
+  analysis.json              AI summary, chapters, and clip candidates
+  analysis_transcript.txt    Human-readable transcript sent to analysis
+  eligible_candidates.txt    Candidate audit/export
+  refined_candidates.txt     Boundary-refined candidate audit/export
+  clips_plan.json            Final clip ranges and metadata
+  clip_info.txt              Human-readable final clip list
+  alignment_report.json      Local timestamp/phrase alignment report
+  social_copy.json           Per-clip social copy
+  blog_post.txt/.md          Optional blog output
+  results.json               Final UI/package manifest
+  clips/                     Raw, hooked, captioned, subtitle, and text files
+
+COMMON INFRASTRUCTURE USED BY ALL STAGES
+----------------------------------------
+pipeline/runner.py is the orchestrator. It executes stages, calculates weighted
+progress, starts background work, pauses for review when requested, records
+artifacts, and supports resuming from intermediate stages.
+
+pipeline/logger.py creates one logger per job. INFO and above are written to the
+console. DEBUG and above are written to debug.log. ImmediateFileHandler flushes
+and optionally fsyncs every record so a crash is less likely to hide the last
+diagnostic lines. LOG_LEVEL and LOG_FSYNC_EACH_RECORD control this behavior.
+
+pipeline/stage_state.py writes stage_state.json. It records:
+
+  - stage status and update time
+  - selected settings fingerprint
+  - input and output existence, byte size, modification time, SHA-1, JSON
+    validity, and item count
+  - stage-specific counts such as words, clips, or blog word count
+
+Secrets are excluded from general settings fingerprints. inputs_changed()
+compares previous artifacts and selected settings to decide whether local
+alignment or another resumable operation needs to run again.
+
+config.py is the central default configuration. Values can come from:
+
+  1. hard-coded defaults in config.py
+  2. environment variables loaded from .env by python-dotenv
+  3. per-job values submitted by the web UI
+
+Per-job UI values normally win. API keys are redacted before settings are logged.
+
+================================================================================
+STAGE 1: DOWNLOAD & PRE-PROCESSING
+================================================================================
+
+Purpose
+-------
+Stage 1 turns a user URL into metadata, transcription-ready audio, and a
+downstream-compatible source video. Its recent design intentionally separates
+the fast audio path from the slower full-video path so transcription and AI work
+can overlap with the 4K video download.
+
+Active files
+------------
+  test_download.py
+  pipeline/downloader.py
+  pipeline/transcode_helper.py
+  pipeline/runner.py
+  config.py
+
+test_download.py is the ACTIVE downloader imported by runner.py and app.py.
+pipeline/downloader.py is a near-duplicate compatibility module, but it is not
+the main runner import and has drifted in some details. In particular, the root
+test_download.py performs video/audio stream downloads in parallel, while the
+pipeline copy may not match every recent optimization. New fixes should either
+be applied to both files or the duplicate should eventually be removed.
+
+Step-by-step workflow
+---------------------
+1. URL normalization:
+   _extract_youtube_id() accepts standard watch URLs, youtu.be links, Shorts,
+   embed, live, /v/, /clip/, mobile/music hosts, playlist-bearing URLs, and
+   malformed URLs handled by regex fallbacks. A valid 11-character ID is
+   converted to https://www.youtube.com/watch?v=<id>. Unknown sites are left
+   unchanged because yt-dlp supports many non-YouTube extractors.
+
+2. Tool discovery:
+   ensure_ytdlp() runs "python -m yt_dlp --version". If unavailable, it attempts
+   to install yt-dlp into the active Python environment.
+   check_ffmpeg() prefers the repository's bundled FFmpeg binary, then searches
+   PATH. The root downloader uses ffmpeg-bin; the pipeline compatibility copy
+   prefers ffmpeg-gpu. Later helpers primarily use config.FFMPEG_PATH and the
+   ffmpeg-gpu directory.
+
+3. Metadata-first request:
+   yt-dlp is called with --dump-single-json, --skip-download, and --no-playlist.
+   meta.json stores title, description, channel/uploader, duration, normalized
+   URL, thumbnail, upload date, view count, and generated video_filename.
+
+4. Fast audio-first path:
+   runner.py calls download_audio_only() synchronously. yt-dlp downloads
+   bestaudio[ext=m4a]/bestaudio into temp_download/audio.m4a. FFmpeg converts it
+   to audio.wav using pcm_s16le, 16,000 Hz, one channel. This format is small,
+   uncompressed, and widely accepted by Whisper and diarization tools.
+
+5. Job rename:
+   Once the title exists, the temporary output folder is renamed to the numbered
+   human-readable folder. File logging is detached and reattached around the
+   rename. Music preprocessing state is also told about the new directory.
+
+6. Background full-video path:
+   download_video_stream_only() runs in daemon thread "BG-VideoDownload".
+   test_download.py downloads bestvideo up to 2160p and best M4A audio in two
+   Python threads. Progress is combined with an 80 percent video / 20 percent
+   audio weighting because video is normally the larger transfer.
+
+7. Stream merge:
+   FFmpeg maps video from input 0 and audio from input 1 and uses "-c copy".
+   Stream copy avoids quality loss and avoids expensive re-encoding. Timeout is
+   estimated from input size. Temporary streams are removed only after success;
+   on failure they are preserved for retry and diagnosis.
+
+8. Validation and codec normalization:
+   Full download_video() validates the merged duration with ffprobe.
+   ensure_h264_source() probes the video codec. H.264 is accepted unchanged.
+   AV1, VP9, and other codecs are transcoded because the target GPU may not
+   hardware-decode them efficiently. FFmpeg uses CPU decode plus h264_nvenc,
+   preset p1, CQ from NVENC_CQ, VBR rate control, and audio stream copy.
+   A temporary ".transcoded.mp4" is validated before atomically replacing the
+   original. Failure keeps the original source and logs that processing may be
+   slower.
+
+9. Synchronization:
+   Transcription, AI analysis, and clip selection are allowed to run while the
+   full video downloads. Before raw extraction begins, runner.py joins the video
+   thread. A background download failure becomes a pipeline failure at this
+   synchronization point.
+
+Progress behavior
+-----------------
+_run_cmd_with_progress() merges stdout/stderr, parses yt-dlp percentage text, and
+can parse FFmpeg time values when duration is known. It reports changed
+percentages through a callback and logs every 10 percent. The runner explicitly
+publishes a post-download progress event so the UI does not remain at zero if a
+later transcription error occurs.
+
+Background music downloads
+--------------------------
+download_audio_track() downloads a URL as highest-quality MP3. The music folder
+contains _index.json keyed by URL, including filename, title, video ID, and
+download time. Existing tracks are reused. Optional cookies.txt is detected for
+restricted YouTube access. Temporary files live under music/_tmp.
+
+Libraries and why they are used
+-------------------------------
+  yt-dlp       Website extraction, metadata, separate video/audio downloads
+  FFmpeg       Audio conversion, stream merge, transcoding
+  ffprobe      Codec and duration validation
+  threading    Concurrent audio/video transfer and background full download
+  subprocess   Safe invocation and output capture of external executables
+  pathlib/os   Cross-platform path and file operations
+  json         Metadata and music index persistence
+  re/urllib    URL recognition, normalization, and filename sanitization
+  shutil       PATH lookup, moves, and cleanup
+
+Main artifacts
+--------------
+  meta.json
+  audio.wav
+  <sanitized title>.mp4
+  temporary temp_download/* files during work
+  optional music/<video_id>.mp3 and music/_index.json
+
+Failure and resume rules
+------------------------
+If an MP4 and meta.json already exist, runner.py skips the download stage.
+Metadata failure, yt-dlp failure, or failed stream merge is fatal. H.264
+normalization is best-effort: failure warns and retains the source. Temporary
+download files are deliberately retained after a failed merge.
+
+================================================================================
+STAGE 2: AUDIO TRANSCRIPTION
+================================================================================
+
+Purpose
+-------
+Stage 2 converts speech into a provider-independent transcript containing both
+segment-level and word-level timing. Later AI, boundary, caption, and editing
+logic depends on these timestamps.
+
+Files
+-----
+  pipeline/transcriber.py
+  pipeline/transcribe.py
+  smallest_ai_stt.py
+  config.py
+
+Input resolution
+----------------
+transcribe_video(job_dir, meta, settings, logger) first looks for the source
+named by meta["video_filename"]. If that is missing, it tries a sanitized title
+filename and then scans the job directory for a usable MP4, excluding internal
+raw and captioned clip files. Existing audio.wav is reused; otherwise FFmpeg
+extracts 16 kHz mono PCM audio.
+
+Transcription methods
+---------------------
+TRANSCRIPTION_METHOD defaults to "auto". The auto fallback order is:
+
+  local -> openrouter -> smallest -> cpu
+
+"local" uses faster-whisper with CTranslate2 on CUDA. "cpu" uses the same model
+on CPU. Config defaults currently name large-v3-turbo, int8 compute, beam size
+5. The dispatcher explicitly maps local to CUDA and cpu to CPU; WHISPER_DEVICE
+exists as configuration but is not the only authority in the current dispatch.
+
+OpenRouter sends audio to its Whisper transcription endpoint. Because this path
+may return plain text rather than timed words, _text_to_pseudo_segments()
+estimates timestamps across the media duration. WAV payloads over the API's
+25 MB limit are rejected so another fallback can run.
+
+Smallest.ai sends audio to the Waves/Pulse STT endpoint. Long recordings are
+split around approximately 20-minute boundaries. find_best_split_time() uses
+soundfile and NumPy to inspect RMS energy near the target and select a quieter
+boundary, reducing the chance of cutting through a spoken word. Chunk timestamps
+are offset back into the full-video timeline and temporary chunk WAV files are
+removed.
+
+Normalized transcript schema
+----------------------------
+transcript.json contains:
+
+  language
+  duration
+  transcription_method
+  word_count
+  segment_count
+  has_speakers: false
+  segments: [
+    {id, start, end, text, speaker: null, words: [...]}
+  ]
+  words: [
+    {word, start, end, segment_id, speaker: null}
+  ]
+
+The current transcriber intentionally does not assign speakers. Speaker fields
+remain null so every provider produces the same schema.
+
+Libraries and why they are used
+-------------------------------
+  faster-whisper/CTranslate2  Efficient local Whisper inference
+  torch                      CUDA memory cleanup after local inference
+  requests                   OpenRouter and Smallest.ai HTTP APIs
+  base64                     OpenRouter audio payload encoding
+  soundfile                  Direct WAV sample loading
+  numpy                      RMS energy calculation for quiet split points
+  FFmpeg/ffprobe             Audio extraction and duration probing
+  argparse                   Standalone pipeline/transcribe.py CLI
+
+Configuration and secrets
+-------------------------
+  TRANSCRIPTION_METHOD
+  TRANSCRIPTION_FALLBACK_ORDER
+  WHISPER_MODEL
+  WHISPER_LANGUAGE
+  WHISPER_DEVICE
+  WHISPER_COMPUTE_TYPE
+  WHISPER_BEAM_SIZE
+  OPENROUTER_API_KEY / OPENROUTER_WHISPER_MODEL / OPENROUTER_API_URL
+  SMALLEST_API_KEY / SMALLEST_API_URL / SMALLEST_LANGUAGE
+
+Failure behavior
+----------------
+A forced method tries only that method. Auto mode skips cloud methods without
+keys and continues after provider/model failures. Empty results do not count as
+success. If every method fails, transcribe_video() raises "All transcription
+methods failed". Audio extraction failure is fatal. Duration-probe failure is
+nonfatal and returns zero, although pseudo-timing quality is then reduced.
+
+Artifacts
+---------
+  audio.wav
+  transcript.json
+  temporary audio_chunk_<n>.wav files during Smallest.ai chunking
+
+pipeline/transcribe.py can run this stage independently with --video, --output,
+and --method and can write an additional caller-selected JSON output.
+
+================================================================================
+STAGE 3: DIARIZATION (SPEAKER IDENTIFICATION)
+================================================================================
+
+Current architectural truth
+---------------------------
+The old architecture described pyannote as a mandatory top-level stage. That is
+no longer accurate.
+
+pipeline/diarizer.py is now a compatibility stub. run_diarization() logs that
+pyannote was removed from the main path and returns an empty list. The import is
+kept so older code does not break.
+
+Speaker identity is now primarily solved visually inside Stage 6 by scene
+templates, face detection, face embeddings, and active-crop planning. Optional
+audio diarization still exists as a helper for wide shots where two or more
+visible people make visual routing ambiguous.
+
+Optional pyannote helper
+------------------------
+pipeline/diarize_helper.py is an isolated command-line worker. It accepts:
+
+  --audio   16 kHz mono WAV
+  --token   Hugging Face access token
+  --output  JSON destination
+
+It imports pyannote.audio and torch only inside the helper environment. It uses
+soundfile to load WAV directly, avoiding some Windows torchcodec/FFmpeg DLL
+problems. Output is a timeline:
+
+  [{"t_start": seconds, "t_end": seconds, "speaker": "SPEAKER_00"}, ...]
+
+Clip Tool v4 integration
+------------------------
+speaker_tracking.py loads either a supplied legacy diarization file or creates a
+clip-scoped diarization cache when wide templates require it. Possible files
+include:
+
+  <clip>_raw_job/diarization/clip_*.wav
+  <clip>_raw_job/diarization/clip_*.raw.json
+  <clip>_raw_job/diarization/clip_*.json
+  <clip>_raw_job/diarization/clip_*.meta.json
+
+Legacy full-video names such as diarization.json, diarization_raw.json, and
+audio_mono.wav are also recognized. Loaded records are normalized to start,
+end, and speaker values.
+
+Configuration
+-------------
+  HUGGINGFACE_TOKEN or HF_TOKEN
+  V4_DIAR_PYTHON       Python executable for the isolated helper
+  V4_DIARIZATION_PATH  Optional existing diarization JSON
+  V4_SPEAKER_FILTER
+  DIARIZATION_LOOKAHEAD
+
+Failure behavior
+----------------
+Missing token, helper, Python environment, audio extraction, imports, accepted
+model terms, or inference output does not normally stop the main pipeline.
+Warnings are logged and the CV-only continuous tracking path is used. The helper
+itself exits with explicit nonzero codes for missing imports and inference
+errors. Empty timelines include guidance to verify the Hugging Face token and
+model access terms.
+
+Libraries and why they are used
+-------------------------------
+  pyannote.audio  Optional voice-activity and speaker-clustering model
+  torch           pyannote inference device/runtime
+  soundfile       Stable WAV loading on Windows
+  FFmpeg          Clip-scoped mono audio extraction
+  json/subprocess Inter-process exchange with the isolated helper
+
+================================================================================
+STAGE 4: AI ANALYSIS & CLIP SELECTION
+================================================================================
+
+Purpose
+-------
+This stage finds potentially valuable short-form moments, refines their proposed
+boundaries, ranks them, converts them into valid clip plans, and applies a final
+conservative validation. It is intentionally multi-pass rather than asking one
+large prompt to do everything.
+
+Files
+-----
+  pipeline/analyzer.py
+  pipeline/clip_selector.py
+  pipeline/clip_alignment.py
+  pipeline/local_clips_generator.py
+  pipeline/adjust_clips.py
+
+Part A - transcript analysis
+----------------------------
+analyze_transcript() divides long transcripts into windows. Defaults are 900
+seconds with 180 seconds of overlap so an important thought crossing a window
+edge appears fully in at least one request.
+
+The normal sequential workflow is:
+
+1. Discovery:
+   Each window asks an AI model to identify meaningful, viral, educational, or
+   emotionally complete candidates. The requested count per window is derived
+   from clip_count and bounded to a useful range. A compact local transcript
+   scan also notices questions, numbers, insight phrases, and weak promotional
+   intros.
+
+2. Boundary refinement:
+   Candidate groups, normally batches of 15, are sent with nearby transcript
+   context. The model can adjust timestamps or represent a clip as multiple
+   ranges. Failed large batches can be split into smaller batches of 10.
+
+3. Judge/ranking:
+   Surviving candidates are ranked for hook, completeness, flow, usefulness,
+   and social potential. "Get all clips" is implemented by setting clip_count to
+   999, avoiding the normal small final target.
+
+4. Local filtering and metadata repair:
+   Invalid durations, unusable text, and near-duplicates are removed. Missing
+   title, caption, description, reason, or hashtags are repaired locally so
+   downstream files remain complete.
+
+Overlaps above roughly 85 percent of the shorter candidate are treated as
+duplicates. Discovery failure is fatal because there is no candidate pool;
+boundary-refinement or judge failure can fall back to the previous valid pool.
+
+Supported AI providers
+----------------------
+  Anthropic Claude via the anthropic SDK
+  Google Gemini via google-genai
+  OpenRouter via requests and OpenAI-compatible JSON
+  Featherless via requests and OpenAI-compatible JSON
+  OpenAI via requests and the chat-completions endpoint
+
+Provider planning distinguishes lower-cost discovery models from stronger
+analysis/judge models. AI_CROSS_PROVIDER_FALLBACK permits a failed provider to
+fall through to another configured provider. Requests are serialized where
+needed, retried, timed out, and cached.
+
+Analysis safety and diagnostics
+-------------------------------
+API responses are parsed as structured JSON. Rejected JSON-mode or reasoning
+options can be disabled on retry. Bad responses are written to
+analysis_bad_response_*.txt, failures to analysis_failures.jsonl, and successful
+responses to api_cache. Gemini thinking output is disabled in relevant paths to
+avoid large thought-process token consumption.
+
+Artifacts produced by analysis
+------------------------------
+  analysis.json
+  analysis_transcript.txt
+  eligible_candidates.txt
+  refined_candidates.txt
+  analysis_fallback_status.txt
+  api_cache/*
+  analysis_failures.jsonl
+  analysis_bad_response_*.txt
+
+Part B - clip plan construction
+-------------------------------
+select_clips() turns analysis candidates into clips_plan.json. If an existing
+clips_plan.json is present, it is loaded to preserve a user-edited/custom plan.
+
+For each candidate, _build_plan() performs:
+
+  - range normalization into one or more segments
+  - start/end snapping to word timestamps
+  - backward search for a clean sentence or thought start
+  - forward search for a complete ending
+  - minimum-duration extension when needed
+  - maximum-duration trimming with a small safety allowance
+  - weak-opening removal
+  - transcript text reconstruction
+  - completeness scoring and metadata copying
+
+Important limits include an approximate 8-second maximum start extension and
+6-second maximum end extension. Word walks are bounded so malformed punctuation
+cannot cause unlimited expansion. Weak continuation words and filler openings
+are recognized. Generic introductions near the beginning of the source are
+penalized unless they contain real insight.
+
+Post-snap AI validation
+-----------------------
+validate_clips_with_ai() reviews a larger pool than the final requested count:
+max(target + 5, target * 1.5). It can keep, adjust, or discard each plan.
+Discarding is deliberately conservative; strong hook or meaning scores can
+override an overly aggressive discard. If validation fails, all locally valid
+plans are retained.
+
+The validation cache key includes a fingerprint of clip names and ranges. This
+prevents stale validation from being reused after timestamps change.
+
+Local alignment and fallback
+----------------------------
+align_clips_plan() compares candidate text anchors with flattened transcript
+words, patches mismatched timestamps, saves the pre-alignment plan, rewrites
+clip_info.txt, and records alignment_report.json.
+
+If normal selection fails, local_clips_generator.run_local_alignment() builds a
+plan from refined_candidates.txt or eligible_candidates.txt using phrase
+anchors. adjust_clips.py is a standalone repair utility that first tries global
+text-sequence matching and then a timestamp-near phrase fallback.
+
+Artifacts
+---------
+  clips_plan.json
+  clips_plan.pre_alignment.json
+  clip_info.txt
+  alignment_report.json
+
+Libraries and why they are used
+-------------------------------
+  requests/anthropic/google-genai  AI provider communication
+  json/re                         Structured output and tolerant parsing
+  hashlib                         Content-aware API/validation cache keys
+  threading/time                  Serialized calls, retries, timeouts
+  dataclasses/pathlib/copy/math    Safe local word/range alignment
+  difflib                         UI-side edited-text timing reconciliation
+
+Key settings
+------------
+  ai_provider, ai_model, api_key
+  clip_count, get_all_clips
+  min_duration, max_duration
+  enable_reasoning
+  skip_refinement, refinement_batch_size
+  skip_judge, skip_validation, skip_duplication
+  analysis_window_seconds, analysis_overlap_seconds
+  AI_MAX_RETRIES, AI_ANALYSIS_TIMEOUT
+  AI_MAX_TOKENS_ANALYSIS
+  AI_ANALYSIS_PROMPT_CHAR_BUDGET
+  BOUNDARY_REFINE_WORD_BUDGET
+  MAX_JUDGE_CANDIDATES
+
+================================================================================
+STAGE 5: EXTRACTION & ALIGNMENT
+================================================================================
+
+Purpose
+-------
+Stage 5 waits for the full source video, resolves each final range, renders one
+or more source segments, and creates one raw MP4 per clip. Stage 6 supplies much
+of the crop plan, but Stage 5 owns source lookup, resume rules, segment
+coordination, concatenation, and final raw-file validation.
+
+Files
+-----
+  pipeline/extractor.py
+  pipeline/parallel_extractor.py
+  pipeline/gpu_scheduler.py
+  pipeline/clip_alignment.py
+  pipeline/speaker_tracking.py
+
+Extraction workflow
+-------------------
+1. Resolve source video from meta.json. If the named file is missing, scan the
+   job root for a suitable MP4.
+2. Resolve optional manual template files from configured paths and conventional
+   names such as manual_templates.json and templates/manual_templates.json.
+3. Apply EXTRACTION_RESUME_FROM_CLIP when set. It accepts either a 1-based number
+   or clip name.
+4. Skip an existing raw clip only if it is valid and larger than 4096 bytes.
+5. For each clips_plan segment, call the Clip Tool v4 renderer.
+6. If a clip has multiple ranges, render temporary part MP4s and concatenate
+   them in order.
+7. Delete temporary parts after successful concatenation.
+8. Return successful raw paths in plan order.
+
+Parallelism
+-----------
+parallel_extractor.py uses ThreadPoolExecutor. FFmpeg renders may overlap, but a
+Semaphore(1) protects GPU face tracking because the singleton InsightFace/ONNX
+state is not treated as safely concurrent. gpu_scheduler.ffmpeg_worker_count()
+queries nvidia-smi free VRAM when available and estimates a worker count from:
+
+  GPU_MEMORY_RESERVE_MB
+  GPU_MEMORY_PER_FFMPEG_JOB_MB
+  EXTRACTION_MAX_PARALLEL_JOBS
+
+If GPU scheduling is disabled or nvidia-smi is unavailable, it falls back to one
+worker. config.GPU_FORCE_SINGLE_WORKER can also force serialized GPU extraction.
+
+Raw outputs and v4 work directories
+-----------------------------------
+  clips/clip_XX_raw.mp4
+  clips/_temp_clip_XX_part_N.mp4
+  clips/clip_XX_raw_job/
+
+The per-clip job directory can contain scene_cuts.json, crop_keyframes.json,
+segment_analysis.txt, trim_manifest.json, timeline_map.json, pipeline.log,
+debug.txt, templates, classification_cache, diarization data, and debug JSON.
+These are intentionally detailed because they make a bad crop reproducible.
+
+Failure behavior
+----------------
+Missing source video is fatal. A failed clip is logged without discarding
+successful clips. Failed concat removes unusable temporary parts. Existing valid
+raw clips support resume. GPU resources are cleaned after the whole parallel
+batch rather than after every clip so the expensive face model can be reused.
+
+Libraries
+---------
+  concurrent.futures/threading  Parallel work with controlled GPU access
+  FFmpeg/subprocess             Precise trim, render, and concat
+  nvidia-smi                    Available VRAM measurement
+  json/pathlib/os               Plans, manifests, and artifact handling
+
+================================================================================
+STAGE 6: SPEAKER TRACKING & CROPPING (THE CV ENGINE)
+================================================================================
+
+Purpose
+-------
+Stage 6 converts horizontal or mixed-layout source footage into a stable
+vertical/horizontal social crop that follows the relevant face without abrupt
+pans, frozen framing, or unnecessary movement.
+
+Primary files
+-------------
+  pipeline/speaker_tracking.py
+  pipeline/template_tool.py
+  pipeline/local_clips_generator.py
+  pipeline/test_face_tracking.py
+  clean_tracking_cache.py
+
+Scene detection
+---------------
+The engine prefers TransNetV2 when available. It can fall back to PySceneDetect
+and then FFmpeg's scdet. Configuration includes:
+
+  SCENE_DETECT_BACKEND
+  TRANSNETV2_THRESHOLD
+  PYSCENEDETECT_THRESHOLD
+  TRACKING_SCDET_PRIMARY / SECONDARY
+  TRACKING_SCDET_GAP_MIN / DEDUP_GAP
+  FRAME_DIFF_THRESHOLD
+  DEDUP_GAP
+
+Multiple layers are useful because hard cuts, fades, layout switches, and rapid
+podcast camera changes do not all look identical. Nearby detections are deduped.
+
+Template discovery
+------------------
+Representative frames are sampled after scene cuts to avoid transition blur.
+Perceptual hashes group visually similar layouts into templates. A template can
+represent one-person close-up, two-person wide shot, split screen, or another
+recurring composition. Important controls include TEMPLATE_PHASH_THRESHOLD,
+MAX_TEMPLATES, TEMPLATE_FRAME_OFFSET, TRACKING_PHASH_THRESHOLD, and scene
+correlation thresholds.
+
+pipeline/template_tool.py is a manual OpenCV authoring tool. It creates a
+960-pixel-wide MJPEG proxy for responsive seeking, supports play, scrub,
+frame-step and snap operations, and writes normalized face boxes plus optional
+speaker labels. Manual templates override or guide automatic discovery.
+
+Face detection and identity
+---------------------------
+The preferred detector is InsightFace using onnxruntime-gpu. Face embeddings
+allow cosine-similarity identity matching across shots. OpenCV and optional
+fallback detectors are used when the primary backend is unavailable.
+
+Quality filters reject low-confidence and tiny background faces:
+
+  TRACKING_MIN_FACE_SCORE default 0.45
+  TRACKING_MIN_FACE_AREA_FRAC default 0.012
+  TRACKING_FACE_CASCADE_MIN_SIZE default 40 x 40
+  EMBEDDING_MATCH_THRESHOLD default 0.45
+
+Frames for detection can be decoded by PyAV or FFmpeg and resized to
+TRACKING_FRAME_EXTRACT_WIDTH, default 960, balancing speed and face detail.
+
+Active-speaker and wide-shot routing
+------------------------------------
+Single-person layouts can follow the detected face directly. Wide layouts can
+use face identity, motion/visual scoring, template speaker labels, and optional
+Stage 3 diarization. If audio diarization is unavailable, continuous visual
+tracking remains the fallback.
+
+Crop planning
+-------------
+The target defaults are 1080x1920 for 9:16 and 1920x1080 for horizontal output.
+The planner computes crop width from the target aspect ratio, centers around the
+selected face, applies face padding and nose room, clamps to source bounds, and
+creates time-keyed crop positions.
+
+Tracking samples are denser for wide or post-cut sections and lighter for stable
+close-ups. Current logic includes approximately 0.25-second tracking cadence in
+active sections, post-cut boost frames, EMA-style smoothing, maximum pan-speed
+limits, drift correction, and head/nose room. Relevant settings include:
+
+  SINGLE_SAMPLE_INTERVAL
+  WIDE_SAMPLE_INTERVAL
+  DRIFT_THRESHOLD
+  NOSE_ROOM_FACTOR
+  TRACKING_FACE_PADDING
+  V4_POST_CUT_BOOST_DURATION
+  V4_POST_CUT_BOOST_FRAMES
+
+The engine trims or avoids unreliable zero-face boundaries. An animated crop is
+preferred when movement exists. If no animation is needed, static, centered, or
+uncropped fallbacks can be used. If an animated tracked render fails, the system
+avoids silently replacing it with a misleading frozen tracked camera.
+
+Rendering
+---------
+FFmpeg performs crop, scale, audio mapping, and H.264 output. NVENC is preferred
+with configured preset/CQ; libx264 is the software fallback. FFMPEG_HWACCEL can
+request CUDA decoding where the source codec and hardware permit it.
+
+Libraries and why they are used
+-------------------------------
+  insightface          Face detection and embedding extraction
+  onnxruntime-gpu      CUDA execution of InsightFace ONNX models
+  OpenCV               Frames, image transforms, fallback detection, UI tool
+  NumPy                Geometry, similarity, smoothing, frame statistics
+  PyAV                 Fast in-process frame decoding
+  Pillow/imagehash     Perceptual hashing and image utilities
+  torch/TransNetV2     Neural scene-cut detection
+  scenedetect          CPU content-adaptive cut fallback
+  CuPy                 Optional GPU-array work and memory cleanup
+  FFmpeg               Final crop/render/encode
+
+Important artifacts
+-------------------
+  scene_cuts.json
+  template_registry.json / template_manifest.json
+  crop_keyframes.json
+  segment_analysis.txt
+  timeline_map.json
+  trim_manifest.json
+  classification_cache/*.json
+  debug/*.json
+
+================================================================================
+STAGE 7: TTS HOOKS, CAPTIONING & MUSIC MIXING
+================================================================================
+
+Purpose
+-------
+Stage 7 adds an optional spoken/visual hook intro, burns readable timed captions,
+and optionally mixes background music and transition effects.
+
+Files
+-----
+  pipeline/tts_hook.py
+  pipeline/captioner.py
+  pipeline/font_downloader.py
+  download_fonts.py
+  assets/audio/*
+  assets/fonts/*
+
+Stage 7A - TTS hook overlay
+--------------------------
+apply_hooks_to_clips() chooses hook_phrase, title, or "Check This Out". It calls
+Smallest.ai Lightning TTS using the configured voice, sample rate, and speed.
+
+build_hook_intro() reads the first source frame with OpenCV, creates a blurred
+black-and-white visual, applies a slow zoom, measures/wraps text with Pillow, and
+uses face-aware placement when possible. FFmpeg drawtext animates active and
+revealed words, outlines text, mixes hook music/SFX, and creates an intro MP4.
+The intro and raw clip are concatenated into clip_XX_hooked.mp4.
+
+Hook artifacts:
+  clips/hooks/hook_clip_XX.wav
+  clips/hooks/intro_clip_XX.mp4
+  clips/clip_XX_hooked.mp4
+  clips_plan.json updated with tts_hook_duration
+
+Disabling hooks removes existing hooked outputs and resets duration. "save_only"
+keeps generated hook assets without concatenating them. Missing API key, missing
+raw clip, failed TTS, or failed intro is handled per clip and logged.
+
+TTS visual defaults
+-------------------
+  Font: Barlow Condensed Black
+  Font file: assets/fonts/BarlowCondensed-Black.ttf
+  Active color: #FFD600
+  Revealed color: #FFFFB0
+  Black outline width: 3 px
+  Background blur: 12
+  Zoom: 1.00 to approximately 1.06
+  Placement: auto, above_face, below_face, top, or bottom
+  Line-height ratio: 1.2
+  Default voice: robert
+  Default speed: 0.8
+  Default sample rate: 44100
+
+Stage 7B - caption word selection
+--------------------------------
+_get_clip_local_words() selects transcript words that fall inside each clip's
+one or more source segments and converts source times to clip-local times. It
+deduplicates overlapping ranges. User-edited words can override the original
+word text/timing. Hooked variants shift caption timing by tts_hook_duration.
+
+Stage 7C - caption rendering
+----------------------------
+burn_captions() renders raw and, when present, hooked variants. Output names
+include the caption style so re-burns do not overwrite other designs:
+
+  clip_XX_captioned_<style>.mp4
+  clip_XX_captioned_<style>_hooked.mp4
+
+caption_output_suffix can explicitly select the suffix. preserve_caption_variants
+keeps previous styles. Optional ASS and SRT files are controlled by CAPTION_USE_ASS,
+CAPTION_SAVE_SRT, and CAPTION_KEEP_FILTER_FILES.
+
+Captions are timed word by word. Current layout logic includes:
+
+  - normally two or three words on screen
+  - safe horizontal margins
+  - long-word width safety
+  - uniform size for paired two-line captions
+  - tight line spacing
+  - active or second-line yellow emphasis
+  - outline and shadow for contrast
+  - literal percentage escaping and FFmpeg expansion disabled
+  - fix_bounds so text remains inside the frame
+  - font size scaled from a 1920-pixel reference height
+
+Caption style defaults
+----------------------
+Common style:
+  font size 215 at 1920 reference height
+  max words 2 in the common style definition
+  main color #F5F0E0
+  outline color #2B2100
+  outline width 10
+  highlight #FFD100
+  shadow 0x2B2100 at 55 percent opacity, y offset 6
+  uppercase
+  position around 70 percent from top
+  safe margin 10 percent
+  line spacing ratio 0.92
+
+Available font styles:
+  Anton Punch          assets/fonts/Anton-Regular.ttf
+  Barlow Black         assets/fonts/BarlowCondensed-Black.ttf
+  Urbanist ExtraBold   assets/fonts/Urbanist-ExtraBold.ttf (default)
+  Lexend ExtraBold     assets/fonts/Lexend-ExtraBold.ttf
+  Oswald Bold          assets/fonts/Oswald-Bold.ttf
+  Impact               C:/Windows/Fonts/impact.ttf
+  Bebas Neue           assets/fonts/BebasNeue-Regular.ttf
+
+font_downloader.py first tries downloadable Google Fonts archives, then the
+Google Fonts CSS/gstatic route. If a selected font remains unavailable,
+captioning tries Impact and finally FFmpeg's default font.
+
+Stage 7D - background music
+--------------------------
+Music can come from an uploaded file, local path, or URL downloaded by Stage 1.
+pre_process_music_async() begins early in the pipeline. It can profile loudness
+and cache analysis under the music library, allowing caption rendering to choose
+a useful loud/crescendo offset rather than always beginning at zero.
+
+FFmpeg mixes the voice track and looped/trimmed music at music_volume, default
+0.10. AUDIO_LOUDNESS_TARGET is -14 LUFS. A user can provide music_start_time.
+Assets include assets/audio/tts_music.mp3, whoosh.mp3, and effecrts.mp3.
+
+Parallelism and fallbacks
+-------------------------
+Caption jobs use ThreadPoolExecutor and gpu_scheduler worker limits. NVENC is
+attempted first and libx264 is retried on encoder failure. A music render failure
+retries without music. If there are no usable words, the source is copied or
+music-mixed without caption drawtext rather than producing no output.
+
+Libraries
+---------
+  requests       Smallest.ai TTS
+  OpenCV/NumPy   First-frame treatment and face-aware placement
+  Pillow         Font loading, text width, wrapping
+  FFmpeg         drawtext, subtitles, audio mix, zoom, concat, encoding
+  concurrent.futures/threading  Parallel caption work and early music profiling
+  urllib/ssl/zipfile            Font downloads and archive extraction
+
+================================================================================
+STAGE 8: SOCIAL COPYWRITING & BLOGGING
+================================================================================
+
+Purpose
+-------
+Stage 8 creates publishable text grounded in each selected clip and optionally
+creates a longer article grounded in the whole source.
+
+Files
+-----
+  pipeline/copywriter.py
+  pipeline/blogger.py
+  pipeline/analyzer.py (shared AI/cache/provider helpers)
+
+Social copy workflow
+--------------------
+generate_copy() builds one batched request containing separate clip blocks. Each
+block includes only that clip's title, hook, reason, ranges, analysis drafts, and
+exact transcript excerpt. This recent isolation prevents the model from mixing a
+fact from one clip into another.
+
+Required fields per clip:
+  title
+  description (normally 2-3 useful sentences)
+  caption (under 180 characters)
+  hashtags (normally 12-15)
+
+The normal result is written to social_copy.json and copied into the in-memory
+clips_plan entries as social_title, social_description, social_caption, and
+hashtags. A readable clips/clip_XX_caption.txt is also written.
+
+Fallback quality rules
+----------------------
+Cached copywriter_response data is reused when valid. The selected provider is
+called first; analyzer.call_llm() can supply provider fallback behavior. If AI
+output cannot be parsed, a local fallback uses the clip title, reason, and
+transcript. Captions that merely repeat the title or hashtag sets dominated by
+generic tags such as viral/trending/fyp are replaced.
+
+Blog workflow
+-------------
+generate_blog_post() runs only when blog_post_enabled is true. It combines source
+metadata, transcript context, analysis summary/chapters, and selected clips. The
+prompt requests clean Markdown, useful headings, timestamp references, no
+fabricated claims, no AI disclaimers, and no em dashes.
+
+Output includes a sanitized-title Markdown file and blog_post.txt. If all AI
+providers fail, _generate_fallback_blog() creates a minimal local article with
+key moments instead of failing the entire pipeline. BLOG_POST_MAX_WORDS defaults
+to 1500 and AI_MAX_TOKENS_BLOG defaults to 4096.
+
+Providers and libraries
+-----------------------
+The same Claude, Gemini, OpenRouter, Featherless, and OpenAI paths used by Stage
+4 are available. anthropic and google-genai are used for their native APIs;
+requests handles OpenAI-compatible APIs. json/re/os perform parsing, validation,
+plain-text conversion, and file persistence.
+
+Artifacts
+---------
+  social_copy.json
+  clips/clip_XX_caption.txt
+  <sanitized title>.md
+  blog_post.txt
+
+================================================================================
+STAGE 9: UI, EDITING, RESUME & PACKAGING
+================================================================================
+
+Purpose
+-------
+Stage 9 exposes the pipeline as a Flask dashboard, tracks background jobs,
+supports human review and partial reruns, and packages every available artifact
+into results.json.
+
+Backend files
+-------------
+  app.py
+  pipeline/runner.py
+  pipeline/trimmer.py
+  pipeline/stage_state.py
+  pipeline/logger.py
+
+Frontend files
+--------------
+  templates/index.html
+  static/style.css
+  static/app.js
+
+The active "/" page is largely self-contained in templates/index.html with
+inline CSS and JavaScript. static/style.css and static/app.js appear to be an
+older/alternate frontend bundle and do not define all current dashboard behavior.
+
+Flask and job execution
+-----------------------
+Flask serves the page and JSON/file routes. flask-cors enables cross-origin
+access where needed. werkzeug.secure_filename protects uploaded music names.
+Jobs are stored in an in-memory dictionary protected by locks and executed in
+background threads. Duplicate active URLs are guarded. Progress events contain
+stage, percent, message, timestamp, and status.
+
+Server-Sent Events
+------------------
+GET /api/progress/<job_id> streams queued progress events and a heartbeat every
+10 seconds. Heartbeats include stale_seconds so the UI can detect a process that
+has stopped updating. The template also runs progress watchdog and log polling
+logic.
+
+Important routes
+----------------
+  GET  /                              Dashboard
+  GET  /api/config                    Models, defaults, key availability
+  POST /api/test-api, /api/test-key   Provider credential test
+  POST /api/process                   Start full pipeline
+  POST /api/download-direct           Download without full clipping pipeline
+  POST /api/resume                    Resume an existing job folder
+  POST /api/retry                     Retry a known job from a stage
+  POST /api/reburn                    Re-render selected/all caption variants
+  GET  /api/progress/<job_id>         SSE progress stream
+  GET  /api/jobs                      Job list
+  GET  /api/job/<job_id>              Job state/settings
+  GET  /api/results/<job_id>          Final results manifest
+  GET/POST /api/clips-plan/<job_id>   Read or save human clip edits
+  GET  /api/preview/<job>/<file>      Inline MP4 preview
+  GET  /api/download/<job>/<file>     File download
+  GET  /api/blog/<job_id>             Blog download
+  GET  /api/logs/<job_id>             Tail debug.log
+  POST /api/cancel/<job_id>           Mark job cancelled
+  POST /api/trim-clip                 Produce a trimmed clip
+
+Human review and edited transcript timing
+-----------------------------------------
+The pipeline can pause after extraction/TTS and before captioning. The review UI
+edits clip title, hook phrase, and transcript text. When edited text is saved,
+app.py uses difflib.SequenceMatcher against original timed words:
+
+  - equal words keep original times
+  - equal-length replacements inherit corresponding times
+  - unequal replacements divide the original time span
+  - inserted/unmatched words are interpolated between known neighbors
+
+edited_words is stored in clips_plan.json and later used by captioning.
+clip_info.txt is regenerated.
+
+Resume and re-render behavior
+-----------------------------
+Valid resume points are transcribe, analyze, extract, tts_hook, caption, and
+copy. run_pipeline_from() loads required earlier artifacts and reruns only the
+selected suffix of the workflow.
+
+Reburn can target all clips or selected clip names. It changes caption style,
+aspect ratio, music, emoji behavior, and detailed caption overrides while
+preserving older caption variants. Caption-only resumes set skip_copywriting so
+good existing social copy is not overwritten.
+
+TTS resume modes are add, remove, save_only, and keep. Music resume modes are
+keep, remove, link, and upload.
+
+Trimming
+--------
+pipeline/trimmer.py accepts keep_segments and a transition mode. FFmpeg builds
+video trim and audio atrim filters, then concatenates or applies a short
+crossfade. It writes <original>_trimmed.mp4 and prefers NVENC with libx264
+fallback.
+
+Packaging
+---------
+runner._package_results() combines meta, analysis, clips_plan, transcript,
+social_copy, optional blog results, existing results, and files on disk.
+
+For every clip it records:
+  title, duration, reason, hook/flow/virality scores
+  social title, description, caption, hashtags
+  raw/hooked/captioned/SRT/ASS/text availability
+  caption failure state
+  caption variant list
+  timed words and hook title
+  selected filenames
+
+Old nonempty copy fields are preserved when copywriting was skipped or new data
+is empty/draft-like. Primary caption selection prefers the requested style's
+hooked variant, then its unhooked variant, then any hooked output, then the
+newest caption file. Missing caption text files are reconstructed.
+
+UI typography and visual system
+-------------------------------
+The current inline dashboard imports Google fonts:
+
+  Syne     Headings and display text
+  Outfit   Body and controls
+  DM Mono  Metadata, labels, status, and logs
+
+The trim modal still contains some Space Grotesk usage. The older static bundle
+imports Inter and Space Grotesk and references JetBrains Mono/Fira Code for logs.
+
+Current inline theme tokens include:
+  background #07070A
+  surfaces #0D0D12, #121219, #19191F, #222229
+  teal #00E5C0
+  orange #FF5F1F
+  purple #9B6DFF
+  high text #F2F2F7
+  middle text #9999AA
+  low text #55555F
+
+The dashboard includes provider controls, model selection, API-key fields,
+transcription method, clip count and duration controls, "get all clips",
+analysis skip/refinement toggles, caption font/style/size/aspect controls, music
+upload/link/volume/start controls, TTS voice/speed/sample-rate/placement/colors,
+review editor, resume/reburn panels, progress stages, logs, result previews,
+caption variant links, blog downloads, and trim modal.
+
+================================================================================
+DEPENDENCY AND LIBRARY GLOSSARY
+================================================================================
+
+Core web/runtime
+----------------
+  Flask         HTTP server, routing, templates, JSON, file streaming
+  flask-cors    Cross-origin response support
+  Werkzeug      Safe upload filename handling
+  python-dotenv Loads .env configuration
+
+Video/audio
+-----------
+  yt-dlp        Extracts metadata and media streams from YouTube/other sites
+  FFmpeg        Merge, trim, transcode, crop, draw text, mix audio, concatenate
+  ffprobe       Reads codec, duration, resolution, and stream metadata
+  ffmpeg-python Optional Python wrapper dependency; most current calls use CLI
+  PyAV          Fast in-process frame decoding
+  OpenCV        Image/video frame operations, manual template UI, fallbacks
+  Pillow        Font metrics and image/text work
+  librosa       Audio analysis utilities
+  soundfile     WAV reading/writing without external decoder complexity
+
+Machine learning and GPU
+------------------------
+  PyTorch       CUDA runtime for selected models and scene/diarization helpers
+  faster-whisper/CTranslate2  Optimized Whisper transcription
+  InsightFace   Face detector and face embeddings
+  onnxruntime-gpu Executes InsightFace models with CUDA
+  CuPy          NumPy-like GPU arrays and cleanup paths
+  TransNetV2    Preferred neural scene-change detector when installed
+  PySceneDetect CPU scene-change fallback
+  pyannote.audio Optional isolated speaker diarization
+
+AI provider clients
+-------------------
+  anthropic     Native Claude API client
+  google-genai  Native Gemini API client
+  requests      OpenRouter, Featherless, OpenAI-compatible APIs, Smallest.ai
+
+Standard-library responsibilities
+---------------------------------
+  json          Persistent structured artifacts and API bodies
+  re            URL/text/JSON cleanup, filename sanitization, parsing
+  pathlib/os    Paths, directory walking, atomic file organization
+  subprocess    FFmpeg, ffprobe, yt-dlp, nvidia-smi, helper processes
+  threading     Background jobs, downloads, locks, and early preprocessing
+  concurrent.futures Parallel clip/caption work
+  hashlib       Cache and artifact fingerprints
+  difflib       Aligns human-edited transcript words
+  urllib/ssl/zipfile Font acquisition
+  logging       Console and durable per-job diagnostics
+
+SUPPORTING ENTRY POINTS, UTILITIES, AND NON-RUNTIME COPIES
+---------------------------------------------------------
+  run.bat
+    Windows launcher for the application environment.
+
+  install.bat
+    Full environment/bootstrap installer described below.
+
+  download_fonts.py
+    One-time installer entry point that asks pipeline/font_downloader.py to
+    acquire every configured caption font. Existing font files are skipped.
+
+  run_refinement_only.py
+    Standalone maintenance entry point for rerunning analysis boundary
+    refinement against artifacts from an existing job without starting the
+    complete download-to-package workflow.
+
+  smallest_ai_stt.py
+    Small standalone Smallest.ai speech-to-text experiment/helper. The main
+    production fallback implementation lives in pipeline/transcriber.py.
+
+  clean_tracking_cache.py
+    Maintenance utility for removing/rebuilding stale tracking-side caches when
+    crop/template diagnostics need a clean run.
+
+  pipeline/test_face_tracking.py
+    Developer test/diagnostic entry point for the face tracking subsystem. It is
+    not called by runner.py during a normal job.
+
+  pipeline/__init__.py
+    Marks the pipeline directory as a Python package; it contains no stage logic.
+
+  pipeline/New folder/*
+    Older copied versions of config.py, extractor.py, and speaker_tracking.py.
+    They are not imported by the active runner and must not be treated as the
+    current implementation. Their presence is historical/experimental.
+
+  test_download.py
+    Despite the filename, this is production runtime code today. See Stage 1.
+
+  test_download.py and pipeline/test_face_tracking.py naming caution
+    A "test" prefix does not necessarily mean an automated unit test in this
+    repository. Check imports and runner usage before moving or deleting them.
+
+INSTALLATION MODEL
+------------------
+install.bat creates or repairs the Python environment, installs CUDA PyTorch
+before requirements.txt, selects a CUDA-compatible CuPy package, installs video
+and face dependencies, optionally installs pyannote when an HF token is present,
+checks the GPU stack, downloads caption fonts, and writes an install completion
+marker.
+
+PyTorch packages are deliberately not listed in requirements.txt because a
+normal PyPI install could replace CUDA builds with CPU-only wheels.
+
+================================================================================
+CONFIGURATION QUICK REFERENCE
+================================================================================
+
+Paths:
+  FFMPEG_PATH, FFPROBE_PATH, GPU_FFMPEG_PATH, GPU_FFPROBE_PATH, OUTPUT_DIR
+
+AI:
+  ANTHROPIC_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY, FEATHERLESS_API_KEY,
+  OPENAI_API, provider/model defaults, fallback model lists, retries, token and
+  prompt budgets, timeouts, temperature, cross-provider fallback
+
+Transcription:
+  TRANSCRIPTION_METHOD, fallback order, Whisper model/language/device/compute
+  type/beam size, OpenRouter Whisper settings, Smallest.ai settings
+
+Clip discovery:
+  default count 10, minimum duration 30 seconds, maximum 180 seconds, analysis
+  windows 900 seconds with 180-second overlap
+
+Extraction/tracking:
+  aspect ratio, output resolutions, workers, resume marker, v4 template and
+  diarization paths, scene detector thresholds, face confidence/area, template
+  hashing, sample intervals, drift, nose room, embedding match, frame width
+
+Encoding:
+  h264_nvenc primary, libx264 fallback, NVENC preset p4 and CQ 23, x264 medium
+  and CRF 20, CUDA hardware acceleration, per-job GPU memory estimates
+
+Captions:
+  default Urbanist ExtraBold, ASS enabled, SRT disabled, safe margins, reveal
+  timing, long-word safety, line offsets/gaps, border sizing, full style matrix
+
+Music/TTS/blog:
+  music directory and default volume 0.10, -14 LUFS target, TTS voice/speed/
+  colors/font/assets, blog enable/tone/word/token limits
+
+Logging:
+  LOG_LEVEL, LOG_FFMPEG_COMMANDS, KEEP_INTERMEDIATE_FILES,
+  LOG_FSYNC_EACH_RECORD
+
+================================================================================
+KNOWN ARCHITECTURAL CAUTIONS
+================================================================================
+
+1. test_download.py is active despite its test-like name. pipeline/downloader.py
+   is a duplicate with behavioral drift. Treat the root module as runtime truth
+   until this duplication is intentionally refactored.
+
+2. Diarization is not a mandatory Stage 3 anymore. The main diarizer is a stub;
+   optional pyannote is clip-scoped and CV tracking is primary.
+
+3. The frontend is mainly inline in templates/index.html. static/style.css and
+   static/app.js contain older design/code and should not be assumed authoritative.
+
+4. The pipeline can pause before captioning by default. A returned empty result
+   at that point is a deliberate review state, not necessarily a failure.
+
+5. Many stages are resumable and cache-aware. When debugging an unexpected old
+   result, inspect stage_state.json, api_cache, existing clips_plan.json, and
+   preserved caption variants before assuming the current code did not run.
+
+6. GPU acceleration is preferred but deliberately layered with CPU/software
+   fallbacks. Performance and exact output can therefore differ by machine while
+   preserving the same artifact contract.
+
+================================================================================
+END OF ARCHITECTURE DOCUMENT
+================================================================================

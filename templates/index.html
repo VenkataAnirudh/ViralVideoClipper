@@ -1,0 +1,3330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Clipper</title>
+  <meta name="description" content="Transform long-form video into viral short clips with AI analysis, face tracking, and animated captions.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+
+  <style>
+    /* ─── TOKENS ─────────────────────────────────────────────────── */
+    :root {
+      --black:       #07070A;
+      --surface-0:   #0D0D12;
+      --surface-1:   #121219;
+      --surface-2:   #19191F;
+      --surface-3:   #222229;
+      --border:      rgba(255,255,255,0.06);
+      --border-hi:   rgba(255,255,255,0.12);
+
+      --teal:        #00E5C0;
+      --teal-dim:    #00B89A;
+      --teal-glow:   rgba(0,229,192,0.15);
+      --orange:      #FF5F1F;
+      --orange-dim:  #CC4C19;
+      --orange-glow: rgba(255,95,31,0.15);
+      --purple:      #9B6DFF;
+      --purple-glow: rgba(155,109,255,0.12);
+
+      --text-hi:     #F2F2F7;
+      --text-mid:    #9999AA;
+      --text-low:    #55555F;
+
+      --radius-sm:   8px;
+      --radius-md:   14px;
+      --radius-lg:   20px;
+
+      --font-head:   'Syne', sans-serif;
+      --font-body:   'Outfit', sans-serif;
+      --font-mono:   'DM Mono', monospace;
+    }
+
+    /* ─── RESET ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--black);
+      color: var(--text-hi);
+      font-family: var(--font-body);
+      font-size: 15px;
+      line-height: 1.6;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ─── GRAIN OVERLAY ──────────────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+      opacity: 0.028;
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ─── AMBIENT BACKGROUND ─────────────────────────────────────── */
+    .ambient {
+      position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
+    }
+    .orb {
+      position: absolute; border-radius: 50%;
+      filter: blur(120px); animation: drift 18s ease-in-out infinite;
+    }
+    .orb-1 {
+      width: 700px; height: 700px;
+      background: radial-gradient(circle, rgba(0,229,192,0.07) 0%, transparent 70%);
+      top: -200px; left: -200px; animation-delay: 0s;
+    }
+    .orb-2 {
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(155,109,255,0.06) 0%, transparent 70%);
+      bottom: -100px; right: -150px; animation-delay: -6s;
+    }
+    .orb-3 {
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(255,95,31,0.05) 0%, transparent 70%);
+      top: 50%; left: 50%; transform: translate(-50%,-50%); animation-delay: -12s;
+    }
+    @keyframes drift {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33%       { transform: translate(40px, -30px) scale(1.05); }
+      66%       { transform: translate(-30px, 20px) scale(0.97); }
+    }
+
+    /* ─── SCANLINE HEADER DECO ───────────────────────────────────── */
+    .scanline {
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, var(--teal) 30%, var(--teal-dim) 70%, transparent 100%);
+      opacity: 0.35;
+      margin: 0 0 32px;
+    }
+
+    /* ─── LAYOUT ─────────────────────────────────────────────────── */
+    .shell {
+      position: relative; z-index: 1;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 20px 80px;
+    }
+
+    /* ─── HEADER ─────────────────────────────────────────────────── */
+    .hd {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 64px 0 48px;
+      text-align: center;
+    }
+    .hd-badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--teal);
+      background: rgba(0,229,192,0.08);
+      border: 1px solid rgba(0,229,192,0.2);
+      border-radius: 100px; padding: 5px 14px; margin-bottom: 28px;
+    }
+    .hd-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); animation: pulse 2s ease infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
+    .hd-title {
+      font-family: var(--font-head);
+      font-size: clamp(2.6rem, 6vw, 4rem);
+      font-weight: 800; letter-spacing: -0.02em;
+      line-height: 1.05;
+      background: linear-gradient(135deg, #F2F2F7 0%, #888898 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .hd-title span {
+      background: linear-gradient(135deg, var(--teal) 0%, var(--purple) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .hd-sub {
+      margin-top: 16px;
+      font-size: 0.95rem; color: var(--text-mid); max-width: 420px;
+      font-weight: 300; letter-spacing: 0.01em;
+    }
+
+    /* ─── CARDS ──────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      margin-bottom: 16px;
+      transition: border-color 0.25s;
+    }
+    .card:hover { border-color: var(--border-hi); }
+    .card-hd {
+      display: flex; align-items: center; gap: 10px;
+      font-family: var(--font-head); font-size: 0.85rem; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-mid); margin-bottom: 22px;
+    }
+    .card-hd .icon-chip {
+      display: grid; place-items: center;
+      width: 30px; height: 30px; border-radius: 8px;
+      background: var(--surface-3); font-size: 14px;
+    }
+
+    /* ─── FORM ELEMENTS ──────────────────────────────────────────── */
+    .form-label {
+      display: block; font-size: 0.78rem;
+      font-family: var(--font-mono); letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--text-low);
+      margin-bottom: 8px;
+    }
+    input[type="text"],
+    input[type="url"],
+    input[type="password"],
+    input[type="file"],
+    input[type="number"],
+    select {
+      width: 100%; padding: 12px 16px;
+      background: var(--surface-0);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-hi);
+      font-family: var(--font-body); font-size: 0.9rem;
+      outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+      appearance: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--teal-dim);
+      box-shadow: 0 0 0 3px rgba(0,229,192,0.09);
+    }
+    input[type="file"]::file-selector-button {
+      margin-right: 12px; padding: 8px 12px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--surface-2); color: var(--text-mid);
+      font-family: var(--font-mono); font-size: 0.72rem;
+      text-transform: uppercase; cursor: pointer;
+    }
+    select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2355555F' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; cursor: pointer; }
+    select option { background: var(--surface-2); }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-group { margin-bottom: 18px; }
+    .form-group:last-child { margin-bottom: 0; }
+
+    /* ─── RANGE SLIDERS ──────────────────────────────────────────── */
+    .range-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .range-val {
+      font-family: var(--font-mono); font-size: 0.8rem;
+      color: var(--teal); background: rgba(0,229,192,0.08);
+      padding: 2px 10px; border-radius: 100px;
+    }
+    input[type="range"] {
+      width: 100%; accent-color: var(--teal); cursor: pointer; height: 4px;
+    }
+
+    /* ─── TOGGLE BUTTONS ─────────────────────────────────────────── */
+    .toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tbtn {
+      font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.05em;
+      padding: 9px 18px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface-0); color: var(--text-mid);
+      cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .tbtn:hover { border-color: var(--border-hi); color: var(--text-hi); }
+    .tbtn.active {
+      background: rgba(0,229,192,0.1);
+      border-color: rgba(0,229,192,0.35);
+      color: var(--teal);
+    }
+    .tbtn.active-orange {
+      background: var(--orange-glow);
+      border-color: rgba(255,95,31,0.35);
+      color: var(--orange);
+    }
+
+    /* ─── TTS HOOK TOGGLE SWITCH ─────────────────────────────── */
+    .switch-row {
+      display: flex; align-items: center; gap: 14px;
+      margin-bottom: 14px;
+    }
+    .switch-label {
+      font-family: var(--font-mono); font-size: 0.78rem;
+      letter-spacing: 0.05em; color: var(--text-mid);
+    }
+    .switch {
+      position: relative; width: 48px; height: 26px;
+      background: var(--surface-3); border-radius: 100px;
+      border: 1px solid var(--border);
+      cursor: pointer; transition: all 0.3s; flex-shrink: 0;
+    }
+    .switch.active {
+      background: rgba(0,229,192,0.25);
+      border-color: rgba(0,229,192,0.5);
+    }
+    .switch::after {
+      content: ''; position: absolute;
+      top: 2px; left: 2px; width: 20px; height: 20px;
+      border-radius: 50%; background: var(--text-low);
+      transition: all 0.3s;
+    }
+    .switch.active::after {
+      left: 24px; background: var(--teal);
+      box-shadow: 0 0 8px var(--teal-glow);
+    }
+    .switch.switch-orange.active {
+      background: rgba(255,95,31,0.25);
+      border-color: rgba(255,95,31,0.5);
+    }
+    .switch.switch-orange.active::after {
+      background: var(--orange);
+      box-shadow: 0 0 8px rgba(255,95,31,0.45);
+    }
+
+    /* ─── TEST KEY ROW ───────────────────────────────────────────── */
+    .test-row { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+    .btn-test {
+      flex-shrink: 0; padding: 9px 20px;
+      font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.07em;
+      border: 1px solid var(--border-hi); border-radius: var(--radius-sm);
+      background: var(--surface-2); color: var(--text-mid);
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-test:hover { border-color: var(--teal-dim); color: var(--teal); }
+    .test-msg { font-family: var(--font-mono); font-size: 0.78rem; }
+    .test-msg.ok  { color: var(--teal); }
+    .test-msg.err { color: var(--orange); }
+    .ext-readonly, .ext-paste {
+      width: 100%; box-sizing: border-box;
+      font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.5;
+      color: var(--text-hi); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 12px 14px; resize: vertical; white-space: pre;
+    }
+    .ext-readonly { height: 200px; color: var(--text-mid); overflow: auto; }
+    .ext-paste { height: 220px; white-space: pre-wrap; }
+    .ext-paste:focus { border-color: var(--teal-dim); outline: none; }
+    /* ─── EXTERNAL-LLM WINDOW BLOCKS (metadata + per-window copy) ─── */
+    .ext-blocks { display: flex; flex-direction: column; gap: 12px; }
+    .ext-block {
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--surface-0); overflow: hidden;
+    }
+    .ext-block-hd {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px 8px 14px; background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+    }
+    .ext-block-title {
+      flex: 1; min-width: 0;
+      font-family: var(--font-mono); font-size: 0.76rem; letter-spacing: 0.04em;
+      color: var(--text-hi); font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ext-block .ext-readonly {
+      border: none; border-radius: 0; height: 150px; background: transparent;
+    }
+    .ext-block .btn-test { padding: 6px 14px; font-size: 0.72rem; }
+    .ext-empty {
+      font-family: var(--font-mono); font-size: 0.8rem;
+      color: var(--text-mid); padding: 12px 2px;
+    }
+    .hint-line {
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      line-height: 1.45;
+      color: var(--text-low);
+    }
+
+    /* ─── PRIMARY BUTTON ─────────────────────────────────────────── */
+    .btn-primary {
+      width: 100%; padding: 18px;
+      font-family: var(--font-head); font-size: 1rem; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      background: linear-gradient(135deg, var(--teal) 0%, var(--teal-dim) 100%);
+      color: #000; border: none; border-radius: var(--radius-md);
+      cursor: pointer; transition: all 0.25s;
+      position: relative; overflow: hidden;
+    }
+    .btn-primary::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+      opacity: 0; transition: opacity 0.2s;
+    }
+    .btn-primary:hover::after { opacity: 1; }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 32px rgba(0,229,192,0.3); }
+    .btn-primary:disabled {
+      background: var(--surface-3); color: var(--text-low);
+      cursor: not-allowed; transform: none; box-shadow: none;
+    }
+    .btn-hint { text-align: center; margin-top: 12px; font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-low); }
+
+    /* ─── DIVIDER ─────────────────────────────────────────────────── */
+    .divider {
+      display: flex; align-items: center; gap: 14px; margin: 6px 0 18px;
+      font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--text-low);
+    }
+    .divider::before, .divider::after { content:''; flex:1; height:1px; background: var(--border); }
+
+    /* ─── PROGRESS STATE ─────────────────────────────────────────── */
+    .progress-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 40px 32px;
+    }
+    .prog-top { text-align: center; margin-bottom: 36px; }
+    .prog-pct {
+      font-family: var(--font-head); font-size: 5rem; font-weight: 800;
+      background: linear-gradient(135deg, var(--teal), var(--purple));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      line-height: 1;
+    }
+    .prog-label { font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-mid); margin-top: 8px; letter-spacing: 0.1em; text-transform: uppercase; }
+    .prog-track {
+      height: 3px; background: var(--surface-3);
+      border-radius: 100px; margin: 28px 0; overflow: hidden;
+    }
+    .prog-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--teal), var(--purple));
+      border-radius: 100px;
+      transition: width 0.6s cubic-bezier(.4,0,.2,1);
+      position: relative;
+    }
+    .prog-fill::after {
+      content: ''; position: absolute; right: 0; top: -3px;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--purple);
+      box-shadow: 0 0 10px var(--purple);
+    }
+
+    /* ─── STAGE LIST ─────────────────────────────────────────────── */
+    .stages { display: flex; flex-direction: column; gap: 4px; }
+    .stage {
+      display: flex; align-items: center; gap: 14px;
+      padding: 12px 16px; border-radius: var(--radius-sm);
+      transition: background 0.2s;
+    }
+    .stage.active  { background: rgba(0,229,192,0.05); }
+    .stage.done    { opacity: 0.5; }
+    .stage-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      background: var(--surface-3); border: 1px solid var(--border-hi);
+      transition: all 0.3s;
+    }
+    .stage.active  .stage-dot { background: var(--teal); box-shadow: 0 0 8px var(--teal); border-color: var(--teal); }
+    .stage.done    .stage-dot { background: var(--teal-dim); border-color: transparent; }
+    .stage-name { font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-mid); }
+    .stage.active  .stage-name { color: var(--teal); }
+    .stage-tick { margin-left: auto; font-size: 0.75rem; color: var(--teal-dim); opacity: 0; }
+    .stage.done .stage-tick { opacity: 1; }
+
+    .err-banner {
+      display: none; margin-bottom: 20px;
+      padding: 14px 18px; border-radius: var(--radius-sm);
+      background: rgba(255,95,31,0.1); border: 1px solid rgba(255,95,31,0.25);
+      color: var(--orange); font-family: var(--font-mono); font-size: 0.8rem;
+    }
+
+    /* ─── LOG VIEWER ─────────────────────────────────────────────── */
+    .log-toggle {
+      margin-top: 24px; text-align: center;
+      font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-low);
+      cursor: pointer; user-select: none;
+    }
+    .log-toggle:hover { color: var(--text-mid); }
+    .log-box {
+      display: none; margin-top: 12px;
+      background: var(--black); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 16px;
+      max-height: 200px; overflow-y: auto;
+    }
+    .log-box pre {
+      font-family: var(--font-mono); font-size: 0.73rem;
+      color: var(--text-low); line-height: 1.7; white-space: pre-wrap;
+    }
+
+    /* ─── RESULTS STATE ──────────────────────────────────────────── */
+    .results-hd {
+      text-align: center; margin-bottom: 40px;
+    }
+    .results-eyebrow {
+      font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--teal); margin-bottom: 12px;
+    }
+    .results-title {
+      font-family: var(--font-head); font-size: 2.2rem; font-weight: 800;
+      background: linear-gradient(135deg, var(--text-hi), var(--text-mid));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .results-video-title {
+      margin-top: 10px; font-size: 0.92rem; color: var(--text-mid);
+      font-style: italic;
+    }
+    .results-meta {
+      display: flex; justify-content: center; gap: 24px; margin-top: 20px;
+    }
+    .meta-pill {
+      font-family: var(--font-mono); font-size: 0.75rem;
+      color: var(--text-low); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 100px;
+      padding: 4px 14px;
+    }
+    .btn-new {
+      margin-top: 24px; display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 28px;
+      font-family: var(--font-head); font-size: 0.85rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      background: transparent; border: 1px solid var(--border-hi);
+      color: var(--text-mid); border-radius: var(--radius-sm); cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-new:hover { border-color: var(--teal-dim); color: var(--teal); }
+
+    /* ─── CLIP GRID ──────────────────────────────────────────────── */
+    .clips-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 580px) { .clips-grid { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } }
+
+    .clip-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .clip-card:hover { border-color: var(--border-hi); transform: translateY(-2px); }
+
+    .clip-thumb {
+      width: 100%; aspect-ratio: 9/16; background: var(--surface-0);
+      display: grid; place-items: center; position: relative; overflow: hidden;
+    }
+    .clip-thumb video { width: 100%; height: 100%; object-fit: cover; }
+    .clip-thumb-placeholder {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .clip-play-icon { font-size: 2rem; opacity: 0.3; }
+    .clip-duration {
+      font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-low);
+    }
+    .clip-number-badge {
+      position: absolute; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+      border: 1px solid var(--border-hi);
+      font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.08em;
+      color: var(--text-mid); padding: 3px 10px; border-radius: 100px;
+    }
+
+    .clip-body { padding: 18px; }
+    .clip-title {
+      font-family: var(--font-head); font-size: 0.92rem; font-weight: 700;
+      color: var(--text-hi); line-height: 1.3; margin-bottom: 12px;
+    }
+    .scores-row { display: flex; gap: 8px; margin-bottom: 14px; }
+    .score-badge {
+      flex: 1; padding: 7px 8px; border-radius: 8px;
+      text-align: center; background: var(--surface-2);
+    }
+    .score-label {
+      font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--text-low); display: block;
+    }
+    .score-val {
+      font-family: var(--font-head); font-size: 1.1rem; font-weight: 700;
+      display: block; margin-top: 2px;
+    }
+    .score-hook .score-val { color: var(--teal); }
+    .score-flow .score-val { color: var(--purple); }
+    .score-total .score-val { color: var(--orange); }
+
+    .clip-reason {
+      font-size: 0.78rem; color: var(--text-low);
+      border-left: 2px solid var(--border); padding-left: 10px;
+      margin-bottom: 14px; line-height: 1.5;
+      font-style: italic;
+    }
+
+    .caption-block {
+      background: var(--surface-0); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 12px;
+      margin-bottom: 14px;
+    }
+    .caption-label {
+      font-family: var(--font-mono); font-size: 0.65rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--text-low); margin-bottom: 6px;
+    }
+    .caption-text {
+      font-size: 0.8rem; color: var(--text-mid); line-height: 1.5;
+    }
+
+    .clip-actions { display: flex; gap: 8px; }
+    .btn-dl {
+      flex: 1; padding: 10px;
+      font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.06em;
+      border-radius: var(--radius-sm);
+      background: var(--teal-glow); border: 1px solid rgba(0,229,192,0.25);
+      color: var(--teal); cursor: pointer; transition: all 0.2s; text-align: center;
+    }
+    .btn-dl:hover { background: rgba(0,229,192,0.18); }
+    .btn-copy {
+      padding: 10px 14px;
+      font-size: 0.8rem; border-radius: var(--radius-sm);
+      background: var(--surface-2); border: 1px solid var(--border);
+      color: var(--text-low); cursor: pointer; transition: all 0.2s;
+    }
+    .btn-copy:hover { color: var(--text-hi); border-color: var(--border-hi); }
+
+    /* ─── CAPTION FAIL BADGE ────────────────────────────────────── */
+    .caption-fail-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: rgba(255,95,31,0.12); border: 1px solid rgba(255,95,31,0.3);
+      border-radius: 100px; padding: 3px 12px; margin-bottom: 10px;
+      font-family: var(--font-mono); font-size: 0.68rem; color: var(--orange);
+      letter-spacing: 0.05em;
+    }
+
+    /* ─── BLOG DOWNLOAD ─────────────────────────────────────────── */
+    .blog-card {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: var(--radius-md); padding: 24px; margin-bottom: 24px;
+      text-align: center;
+    }
+    .blog-card-title {
+      font-family: var(--font-head); font-size: 1rem; font-weight: 700;
+      color: var(--text-hi); margin-bottom: 12px;
+    }
+    .blog-card-meta {
+      font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-low);
+      margin-bottom: 16px;
+    }
+    .blog-dl-row { display: flex; justify-content: center; gap: 12px; }
+
+    /* ─── UTIL ───────────────────────────────────────────────────── */
+    .hidden { display: none !important; }
+    .mt-8 { margin-top: 8px; }
+    .mt-16 { margin-top: 16px; }
+
+    /* ─── GO BACK BUTTON (processing screen) ─────────────────── */
+    .btn-goback {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 14px;
+      margin-top: 20px;
+      font-family: var(--font-mono); font-size: 0.8rem; letter-spacing: 0.06em;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      border: 1px solid var(--border-hi);
+      color: var(--text-mid);
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-goback:hover {
+      border-color: var(--orange-dim); color: var(--orange);
+      background: rgba(255,95,31,0.06);
+    }
+    
+    /* ─── REVIEW EDITOR ─── */
+    .review-clip-row {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      margin-bottom: 16px;
+      background: var(--surface-1);
+      transition: border-color 0.2s;
+    }
+    .review-clip-row:hover {
+      border-color: var(--teal-dim);
+    }
+    .review-clip-header {
+      font-family: var(--font-head);
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--teal);
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .review-time-badge {
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+      background: var(--purple-glow);
+      color: var(--purple);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(155,109,255,0.2);
+    }
+    .review-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    @media (max-width: 768px) {
+      .review-fields {
+        grid-template-columns: 1fr;
+      }
+    }
+    /* ── Trim Modal Overlay ── */
+    .trim-modal {
+      display: none; position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,0.85); backdrop-filter: blur(10px);
+      align-items: center; justify-content: center;
+    }
+    .trim-modal.open { display: flex; animation: fadeIn 0.3s; }
+    .trim-modal-content {
+      background: var(--surface-1); border: 1px solid var(--border-hi);
+      border-radius: 16px; padding: 32px; width: 90%; max-width: 900px;
+      max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      display: flex; flex-direction: column; gap: 24px;
+    }
+    .trim-video-container { width: 100%; max-width: 400px; margin: 0 auto; }
+    .trim-video-container video { width: 100%; border-radius: 8px; border: 1px solid var(--border-hi); }
+    .trim-controls { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .trim-segments-list {
+      background: var(--surface-2); border-radius: 8px; padding: 16px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .trim-segment-item {
+      display: flex; justify-content: space-between; align-items: center;
+      background: var(--surface-3); padding: 8px 16px; border-radius: 8px;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .trim-segment-item button {
+      background: rgba(239,68,68,0.2); color: #EF4444; border: none;
+      padding: 4px 12px; border-radius: 4px; cursor: pointer; transition: 0.2s;
+    }
+    .trim-segment-item button:hover { background: rgba(239,68,68,0.4); }
+    .trim-header { display: flex; justify-content: space-between; align-items: center; }
+    .trim-header h2 { font-family: 'Space Grotesk'; color: var(--teal); margin: 0; }
+    .close-modal {
+      background: none; border: none; color: var(--text-dim); font-size: 1.5rem;
+      cursor: pointer; transition: 0.2s;
+    }
+    .close-modal:hover { color: white; }
+  </style>
+</head>
+<body>
+
+  <!-- Ambient light -->
+  <div class="ambient">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+
+  <div class="shell">
+
+    <!-- ── HEADER ──────────────────────────────────────────────── -->
+    <header class="hd">
+      <div class="hd-badge">Video Intelligence Engine</div>
+      <h1 class="hd-title">Video<span>Clipper</span></h1>
+      <p class="hd-sub">Drop a YouTube link. Get broadcast-ready short clips, animated captions, and social copy.</p>
+    </header>
+    <div class="scanline"></div>
+
+    <!-- ════════════════ STATE 1 — INPUT ════════════════ -->
+    <div id="stateInput">
+
+      <!-- Video source -->
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">🎬</div> Video Source</div>
+        <div class="form-group">
+          <label class="form-label" for="videoUrl">YouTube URL</label>
+          <input type="url" id="videoUrl" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+        </div>
+        <div class="test-row" style="margin-top: 10px;">
+          <button class="btn-test" id="btnDownloadOnly" disabled>📥 Download Video Only</button>
+          <span class="test-msg" id="downloadResult"></span>
+        </div>
+      </div>
+
+      <!-- AI Provider -->
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">🤖</div> AI Provider</div>
+
+        <div class="form-group">
+          <label class="form-label" for="analysisMode">Analysis source</label>
+          <select id="analysisMode">
+            <option value="manual" selected>Manual — paste into your own LLM (no API)</option>
+            <option value="api">API — call the provider automatically</option>
+          </select>
+          <div class="hint-line" id="analysisModeHint"></div>
+        </div>
+
+        <div class="form-group api-only">
+          <label class="form-label">Provider</label>
+          <div class="toggle-row">
+            <button class="tbtn provider-btn active" data-provider="nvidia">NVIDIA</button>
+            <button class="tbtn provider-btn" data-provider="openai">OpenAI</button>
+            <button class="tbtn provider-btn" data-provider="gemini">Gemini</button>
+            <button class="tbtn provider-btn" data-provider="claude">Claude</button>
+          </div>
+          <div class="hint-line" id="aiFallbackHint"></div>
+        </div>
+
+        <div class="row api-only">
+          <div class="form-group">
+            <label class="form-label" for="modelSelect">Model</label>
+            <select id="modelSelect"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="apiKey">API Key</label>
+            <input type="password" id="apiKey" placeholder="NVIDIA API key...">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="analysisWindow">Analysis Window (seconds)</label>
+            <input type="number" id="analysisWindow" value="900" min="60" placeholder="900">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="analysisOverlap">Window Overlap (seconds)</label>
+            <input type="number" id="analysisOverlap" value="180" min="0" placeholder="180">
+          </div>
+        </div>
+
+        <div class="test-row api-only">
+          <button class="btn-test" id="btnTestApi" disabled>Test API</button>
+          <span class="test-msg" id="testResult" style="display:none"></span>
+        </div>
+
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange" id="enableReasoning"></div>
+          <span class="switch-label">Enable AI Reasoning [Affects API Call Token Cost] (uses reasoning tokens — disable for free-tier models)</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange" id="skipRefinement"></div>
+          <span class="switch-label">Skip AI Boundary Refinement Pass [Saves API Calls] (uses discovery boundaries directly)</span>
+        </div>
+        <div class="row" style="margin-top:10px; margin-bottom:5px;">
+          <div class="form-group" style="padding-left: 24px; margin-bottom: 5px;">
+            <label class="form-label" style="font-size:0.85rem;" for="refinementBatchSize">Boundary Refinement Batch Size (Default: 5 — clips per API call. Raise for stronger models.)</label>
+            <input type="number" id="refinementBatchSize" value="5" min="1" max="20" style="padding: 6px 12px; font-size: 0.85rem; width: 120px;">
+          </div>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange active" id="skipStitch"></div>
+          <span class="switch-label">Skip AI Stitching Pass [No OpenAI] (external-LLM clips go straight to selection — no 2-pass merge)</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange" id="skipCompression"></div>
+          <span class="switch-label">Skip AI Compression Pass [Saves API Calls] (retains overlong clips without tightening)</span>
+        </div>
+        <div class="row" style="margin-top:10px; margin-bottom:5px;">
+          <div class="form-group" style="padding-left: 24px; margin-bottom: 5px;">
+            <label class="form-label" style="font-size:0.85rem;" for="compressionBatchSize">Compression Batch Size (Default: 10, split/retry to 5 on error)</label>
+            <input type="number" id="compressionBatchSize" value="10" min="1" max="60" style="padding: 6px 12px; font-size: 0.85rem; width: 120px;">
+          </div>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange active" id="skipJudge"></div>
+          <span class="switch-label">Skip AI Judge Pass [Saves 1 API Call] (ranks and scores refined candidates without extra pass) — ON by default</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange" id="skipValidation"></div>
+          <span class="switch-label">Skip Post-Refinement AI Validation [Saves 1 API Call] (keeps all refined candidates)</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange" id="skipDuplication"></div>
+          <span class="switch-label">Skip Overlap & Duplication Checks [Local Python Logic] (keeps overlapping candidates)</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange active" id="allowOverlaps"></div>
+          <span class="switch-label">Allow Overlapping & Subset Clips (two clips spanning the same window are valuable for different angles) — ON by default</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange active" id="skipDurationFloor"></div>
+          <span class="switch-label">Soft Duration Limits (a 29s clean clip is kept; min/max are preferences, not gates) — ON by default</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange" id="enableNanoTiebreak"></div>
+          <span class="switch-label">Enable GPT-5 nano Tie-Break [Opt-in, +OpenAI calls] (second-opinion verifier when refinement still looks below par)</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch switch-orange active" id="pauseBeforeCaptioning"></div>
+          <span class="switch-label" style="color:var(--orange)">Pause Before Captioning (Allows reviewing & editing subtitles / hook phrases in the UI)</span>
+        </div>
+      </div>
+
+      <!-- Transcription Method -->
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">🎙️</div> Transcription</div>
+
+        <div class="form-group">
+          <label class="form-label" for="transMethod">Method</label>
+          <select id="transMethod">
+            <option value="auto">Auto fallback</option>
+            <option value="local">Local GPU only</option>
+            <option value="smallest" selected>Smallest.ai STT only</option>
+            <option value="cpu">Local CPU only</option>
+          </select>
+          <div class="hint-line" id="transFallbackHint"></div>
+        </div>
+
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="smallestKey">Smallest.ai Key (optional)</label>
+            <input type="password" id="smallestKey" placeholder="sm_...">
+          </div>
+        </div>
+      </div>
+
+      <!-- Clip settings -->
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">✂️</div> Clip Settings</div>
+
+        <div class="form-group">
+          <div class="range-row">
+            <label class="form-label" style="margin:0">Number of Clips</label>
+            <span class="range-val" id="clipCountVal" style="opacity:0.5">10</span>
+          </div>
+          <input type="range" id="clipCount" min="3" max="40" value="10" step="1" disabled style="opacity:0.5">
+          <div class="switch-row" style="margin-top:10px">
+            <div class="switch active" id="clipCountAll"></div>
+            <span class="switch-label">Get all available clips (disable count limit)</span>
+          </div>
+        </div>
+
+
+        <div class="row">
+          <div class="form-group">
+            <div class="range-row">
+              <label class="form-label" style="margin:0">Min Duration</label>
+              <span class="range-val" id="minDurationVal">30s</span>
+            </div>
+            <input type="range" id="minDuration" min="15" max="120" value="30" step="5">
+          </div>
+          <div class="form-group">
+            <div class="range-row">
+              <label class="form-label" style="margin:0">Max Duration</label>
+              <span class="range-val" id="maxDurationVal">90s</span>
+            </div>
+            <input type="range" id="maxDuration" min="15" max="180" value="90" step="5">
+          </div>
+        </div>
+
+        <div class="divider">Pipeline Options</div>
+
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch" id="blogPostEnabled"></div>
+          <span class="switch-label">Generate blog post [1 API Call]</span>
+        </div>
+        <div class="switch-row" style="margin-top:10px">
+          <div class="switch" id="skipCopywriting"></div>
+          <span class="switch-label">Skip Social Copywriting Pass [Saves 1 API Call] (directly uses refined titles and captions)</span>
+        </div>
+
+        <div class="divider">Styling</div>
+
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="captionStyle">Caption Style</label>
+            <select id="captionStyle">
+              <option value="impact_bold" selected>Impact Bold</option>
+              <option value="bebas_neue">Bebas Neue</option>
+              <option value="oswald_bold">Oswald Bold</option>
+              <option value="montserrat_block">Montserrat Block</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="captionFontSize">Font Size (px)</label>
+            <input type="number" id="captionFontSize" value="165" min="100" max="350" placeholder="165">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Aspect Ratio</label>
+            <div class="toggle-row">
+              <button class="tbtn aspect-btn active" data-ratio="9:16">9:16</button>
+              <button class="tbtn aspect-btn" data-ratio="16:9">16:9</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Background music -->
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">BG</div> Background Music</div>
+
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="musicUrl">Music YouTube Link</label>
+            <input type="url" id="musicUrl" placeholder="Optional: paste a YouTube music link">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="musicStartTime">Music Start Offset (sec)</label>
+            <input type="number" id="musicStartTime" min="0" step="1" placeholder="Optional: e.g. 15 or 0">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="musicFile">Music File</label>
+            <input type="file" id="musicFile" accept="audio/*">
+          </div>
+          <div class="form-group">
+            <div class="range-row">
+              <label class="form-label" style="margin:0">Music Volume</label>
+              <span class="range-val" id="musicVolumeVal">10%</span>
+            </div>
+            <input type="range" id="musicVolume" min="0" max="100" value="10" step="1">
+          </div>
+        </div>
+      </div>
+
+      <!-- TTS Hook Overlay -->
+      <div class="card" id="ttsHookCard">
+        <div class="card-hd"><div class="icon-chip">🎤</div> TTS Hook Overlay</div>
+
+        <div class="switch-row">
+          <div class="switch" id="ttsHookToggle"></div>
+          <span class="switch-label">Enable voice hook on first frame (OFF by default)</span>
+        </div>
+
+        <div id="ttsHookSettings" style="display:none">
+          <div class="row">
+            <div class="form-group">
+              <label class="form-label" for="ttsVoiceId">Voice ID</label>
+              <select id="ttsVoiceId">
+                <option value="jessica">Jessica</option>
+                <option value="robert" selected>Robert</option>
+                <option value="magnus">Magnus</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="ttsPlacement">Text Placement</label>
+              <select id="ttsPlacement">
+                <option value="auto" selected>Auto (Face Aware)</option>
+                <option value="above_face">Above Speaker Face</option>
+                <option value="below_face">Below Speaker Face</option>
+                <option value="top">Top Third</option>
+                <option value="bottom">Bottom Third</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="form-group">
+              <label class="form-label" for="ttsSampleRate">Sample Rate</label>
+              <select id="ttsSampleRate">
+                <option value="16000">16,000 Hz</option>
+                <option value="24000">24,000 Hz</option>
+                <option value="44100" selected>44,100 Hz</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <div class="range-row">
+                <label class="form-label" style="margin:0">Font Size (% of height)</label>
+                <span class="range-val" id="ttsFontSizeVal">5.5%</span>
+              </div>
+              <input type="range" id="ttsFontSize" min="3.0" max="10.0" value="5.5" step="0.5">
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="form-group">
+              <div class="range-row">
+                <label class="form-label" style="margin:0">TTS Speech Speed</label>
+                <span class="range-val" id="ttsSpeedVal">0.8×</span>
+              </div>
+              <input type="range" id="ttsSpeed" min="0.5" max="2.0" value="0.8" step="0.1">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="ttsTextColor">Text Color (Active)</label>
+              <input type="color" id="ttsTextColor" value="#FFD600" style="height:38px;padding:2px;cursor:pointer">
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="form-group">
+              <label class="form-label" for="ttsTextColorRevealed">Text Color (Revealed)</label>
+              <input type="color" id="ttsTextColorRevealed" value="#FFFFB0" style="height:38px;padding:2px;cursor:pointer">
+            </div>
+            <div class="form-group" style="visibility:hidden">
+            </div>
+          </div>
+
+          <div class="hint-line">
+            Hook phrase is auto-generated by AI (3–7 words). Displays word-by-word on a desaturated, blurred first-frame with a slow Ken Burns zoom. Prepend is seamless and preserves all audio tracks.
+          </div>
+        </div>
+      </div>
+
+      <!-- Resume Pipeline -->
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">🔄</div> Resume Pipeline</div>
+        <p style="font-size:0.82rem;color:var(--text-low);margin-bottom:16px;line-height:1.5">
+          Re-run part of the pipeline on an existing job folder. Paste the folder path or name from <code style="color:var(--teal);font-family:var(--font-mono)">outputs/</code>
+        </p>
+        <div class="form-group">
+          <label class="form-label" for="resumeFolder">Job Folder Path</label>
+          <input type="url" id="resumeFolder" placeholder="outputs/Video 1 - My Video Title  OR  full path" style="font-size:0.82rem">
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="resumeStage">Resume From</label>
+            <select id="resumeStage">
+              <option value="transcribe">Transcribe → end</option>
+              <option value="analyze">AI Analysis → end</option>
+              <option value="extract">Extract + Caption</option>
+              <option value="tts_hook">TTS Hook Overlay Only</option>
+              <option value="copy">Copy + Package</option>
+            </select>
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end">
+            <button class="btn-test" id="btnResume" style="width:100%;padding:12px">🔄 Resume</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="resumeSingleStage">Run ONLY One Stage (overrides "Resume From" — runs just this, then stops)</label>
+          <select id="resumeSingleStage">
+            <option value="" selected>— off: full resume from stage above —</option>
+            <option value="download_video">Download Video only (re-fetch best quality + merge)</option>
+            <option value="download_audio">Download Audio only (rebuild audio.wav)</option>
+            <option value="music_audio">Download Background Music only (needs YouTube link below)</option>
+            <option value="transcribe">Transcribe only (+ analysis transcript & LLM windows)</option>
+            <option value="analyze">Analysis → clips_plan only (no extraction)</option>
+            <option value="extract">Extract Raw Clips only</option>
+            <option value="tts_hook">TTS Hooks only</option>
+            <option value="caption">Captions only</option>
+          </select>
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="resumeCaptionStyle">Caption Style / Font</label>
+            <select id="resumeCaptionStyle">
+              <option value="impact_bold" selected>Impact Bold</option>
+              <option value="bebas_neue">Bebas Neue</option>
+              <option value="oswald_bold">Oswald Bold</option>
+              <option value="montserrat_block">Montserrat Block</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="resumeCaptionFontSize">Font Size (px)</label>
+            <input type="number" id="resumeCaptionFontSize" value="165" min="100" max="350" placeholder="165">
+          </div>
+        </div>
+        <div class="divider">Resume Music Overrides (Optional)</div>
+        <div class="form-group">
+          <label class="form-label" for="resumeMusicMode">Background Music Mode</label>
+          <select id="resumeMusicMode">
+            <option value="remove" selected>No Background Music</option>
+            <option value="keep">Keep Existing</option>
+            <option value="link">YouTube Link</option>
+            <option value="upload">Upload Audio File</option>
+          </select>
+        </div>
+        <div class="form-group hidden" id="resumeMusicUrlGroup">
+          <label class="form-label" for="resumeMusicUrl">Music YouTube Link</label>
+          <input type="url" id="resumeMusicUrl" placeholder="Optional: paste a YouTube music link">
+        </div>
+        <div class="form-group hidden" id="resumeMusicFileGroup">
+          <label class="form-label" for="resumeMusicFile">Choose Background Music File</label>
+          <input type="file" id="resumeMusicFile" accept="audio/*">
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="resumeMusicStartTime">Start Offset (seconds)</label>
+            <input type="number" id="resumeMusicStartTime" placeholder="e.g. 15 or 0" min="0" step="1">
+          </div>
+          <div class="form-group">
+            <div class="range-row">
+              <label class="form-label" style="margin:0" for="resumeMusicVolume">Volume</label>
+              <span class="range-val" id="resumeMusicVolumeVal">10%</span>
+            </div>
+            <input type="range" id="resumeMusicVolume" min="0" max="100" value="10" step="1">
+          </div>
+        </div>
+        <div class="divider">Resume TTS Hook Overrides (Optional)</div>
+        <div class="form-group">
+          <label class="form-label" for="resumeTtsMode">TTS Hook Mode</label>
+          <select id="resumeTtsMode">
+            <option value="keep" selected>Keep Existing (no changes)</option>
+            <option value="save_only">Save but not Merge</option>
+            <option value="add">Merge / Prepend TTS Hook</option>
+            <option value="remove">Remove TTS Hook</option>
+          </select>
+        </div>
+        <!-- Clip selector — shown only for Caption Only stage -->
+        <div class="form-group" id="resumeClipGroup" style="display:none">
+          <label class="form-label" for="resumeClipNames">
+            Clips to Caption
+            <span style="font-size:0.72rem;color:var(--text-low);font-weight:400;margin-left:6px">— "all"  OR  comma-separated numbers: 1, 3, 5</span>
+          </label>
+          <input type="text" id="resumeClipNames" placeholder="all" value="all" style="font-size:0.82rem">
+        </div>
+        <span class="test-msg" id="resumeResult"></span>
+      </div>
+
+      <button class="btn-primary" id="btnProcess" disabled>⚡ Process Video</button>
+      <p class="btn-hint">Enter API key or use the key loaded from .env, then process</p>
+    </div>
+
+    <!-- ════════════════ STATE 2 — PROCESSING ════════════════ -->
+    <div id="stateProcessing" class="hidden">
+      <div class="progress-card">
+
+        <div class="err-banner" id="errorBanner"></div>
+
+        <div class="prog-top">
+          <div class="prog-pct" id="progressPct">0%</div>
+          <div class="prog-label" id="progressStage">Initializing pipeline...</div>
+        </div>
+
+        <div class="prog-track">
+          <div class="prog-fill" id="progressFill"></div>
+        </div>
+
+        <div class="stages">
+          <div class="stage" id="stage-downloading">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Downloading video</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-transcribing">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Transcribing audio</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-analyzing">
+            <div class="stage-dot"></div>
+            <span class="stage-name">AI analysis &amp; chapter mapping</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-selecting">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Selecting &amp; refining clip windows</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-extracting">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Face-aware crop + NVENC encode</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-captioning">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Burning captions (NVENC)</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-copywriting">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Writing social copy per clip</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-blogging">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Writing blog post</span>
+            <span class="stage-tick">✓</span>
+          </div>
+          <div class="stage" id="stage-packaging">
+            <div class="stage-dot"></div>
+            <span class="stage-name">Packaging results</span>
+            <span class="stage-tick">✓</span>
+          </div>
+        </div>
+
+        <div class="log-toggle" id="logToggle">▾ Show Debug Log</div>
+        <div class="log-box" id="logBox">
+          <pre id="logContent">Waiting for output...</pre>
+        </div>
+
+        <button class="btn-goback" id="btnGoBack">← Go Back</button>
+      </div>
+    </div>
+
+    <!-- ════════════════ STATE 3 — RESULTS ════════════════ -->
+    <div id="stateResults" class="hidden">
+      <div class="results-hd">
+        <div class="results-eyebrow">✦ Processing complete</div>
+        <div class="results-title">Your Clips Are Ready</div>
+        <div class="results-video-title" id="resultsVideoTitle"></div>
+        <div class="results-meta">
+          <span class="meta-pill" id="metaClips">0 clips</span>
+          <span class="meta-pill" id="metaDuration">avg 0s</span>
+          <span class="meta-pill" id="metaScore">avg score 0</span>
+        </div>
+        <button class="btn-new" id="btnNewJob">⚡ Process Another Video</button>
+      </div>
+      <div id="blogSection" class="hidden"></div>
+      <div class="card" id="reburnPanel">
+        <div class="card-hd"><div class="icon-chip">CC</div> Caption Variants</div>
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="reburnClipSelect">Clip</label>
+            <select id="reburnClipSelect"><option value="all">All Clips</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="reburnCaptionStyle">Caption Style</label>
+            <select id="reburnCaptionStyle"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="reburnCaptionFontSize">Font Size (px)</label>
+            <input type="number" id="reburnCaptionFontSize" value="165" min="100" max="350" placeholder="165">
+          </div>
+        </div>
+        <div class="divider">Re-burn Music Overrides (Optional)</div>
+        <div class="form-group">
+          <label class="form-label" for="reburnMusicUrl">Music YouTube Link</label>
+          <input type="url" id="reburnMusicUrl" placeholder="Optional: paste a YouTube music link">
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label class="form-label" for="reburnMusicStartTime">Start Offset (seconds)</label>
+            <input type="number" id="reburnMusicStartTime" placeholder="e.g. 15 or 0" min="0" step="1">
+          </div>
+          <div class="form-group">
+            <div class="range-row">
+              <label class="form-label" style="margin:0" for="reburnMusicVolume">Volume</label>
+              <span class="range-val" id="reburnMusicVolumeVal">10%</span>
+            </div>
+            <input type="range" id="reburnMusicVolume" min="0" max="100" value="10" step="1">
+          </div>
+        </div>
+        <button class="btn-test" id="btnReburn" style="width:100%;padding:12px;margin-top:12px">Re-burn Captions</button>
+        <span class="test-msg" id="reburnResult"></span>
+      </div>
+      <div class="clips-grid" id="clipsGrid"></div>
+    </div>
+
+    <!-- ════════════════ STATE 4 — SUBTITLE EDITOR (PAUSED FOR REVIEW) ════════════════ -->
+    <div id="stateReview" class="hidden">
+      <div class="results-hd">
+        <div class="results-eyebrow" style="color:var(--orange)">✦ Review Required</div>
+        <div class="results-title">Edit Subtitles & Hooks</div>
+        <div class="results-video-title" id="reviewVideoTitle"></div>
+        <p style="font-size:0.85rem;color:var(--text-mid);margin-bottom:16px;max-width:600px;margin-left:auto;margin-right:auto;line-height:1.5">
+          The pipeline is paused. You can edit the clip titles, hook phrases (used for the initial kinetic text and TTS audio), and the subtitle text. Click <strong>Save & Resume</strong> to burn the captions and finish the video.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">✍️</div> Clips Plan</div>
+        <div id="reviewClipsContainer" style="margin-top:16px"></div>
+        
+        <div style="margin-top:20px; display:flex; gap:12px;">
+          <button class="btn-process" id="btnSaveResume" style="flex:1; padding:15px; font-weight:700">💾 Save & Resume Pipeline</button>
+          <button class="btn-new" id="btnCancelReview" style="margin-top:0; padding:15px; background:var(--surface-2); border-color:var(--border)">Cancel</button>
+        </div>
+        <span class="test-msg" id="reviewSaveResult" style="display:block; margin-top:10px; text-align:center"></span>
+      </div>
+    </div>
+
+    <!-- Manual / external-LLM analysis panel (paused_for_external_llm) -->
+    <div id="stateExternalLlm" class="hidden">
+      <div class="results-hd">
+        <div class="results-eyebrow" style="color:var(--orange)">✦ Manual Analysis</div>
+        <div class="results-title">Run the transcript through your LLM</div>
+        <div class="results-video-title" id="extVideoTitle"></div>
+        <p style="font-size:0.85rem;color:var(--text-mid);margin-bottom:8px;max-width:680px;margin-left:auto;margin-right:auto;line-height:1.5">
+          The pipeline paused after transcription. <strong>Step 1:</strong> copy the system prompt into your chat LLM's system field.
+          <strong>Step 2:</strong> paste each transcript window as a message and collect every window's JSON.
+          <strong>Step 3:</strong> paste all of that output below and click <strong>Submit &amp; Resume</strong>.
+          A Python matcher then pins exact clip times from your verbatim phrases — no API key is used.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">📋</div> Step 1 — System prompt <span id="extPromptPath" style="font-size:0.75rem;color:var(--text-mid);font-weight:400;margin-left:8px"></span></div>
+        <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
+          <button class="btn-test" id="btnCopyPrompt" type="button">Copy system prompt</button>
+          <span class="test-msg" id="extPromptCopied" style="display:none"></span>
+        </div>
+        <textarea id="extSystemPrompt" class="ext-readonly" readonly spellcheck="false" placeholder="Loading system prompt..."></textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">🎞️</div> Step 2 — Transcript windows <span id="extWindowCount" style="font-size:0.75rem;color:var(--text-mid);font-weight:400;margin-left:8px"></span></div>
+        <div style="display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap">
+          <button class="btn-test" id="btnCopyWindows" type="button">Copy metadata + all windows</button>
+          <span class="test-msg" id="extWindowsCopied" style="display:none"></span>
+        </div>
+        <div id="extWindowsBlocks" class="ext-blocks"></div>
+        <!-- Full text kept (hidden) for the "copy all" button + fallback; per-block copies render above. -->
+        <textarea id="extWindows" class="ext-readonly" readonly spellcheck="false" placeholder="Loading windows..." style="display:none"></textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><div class="icon-chip">📥</div> Step 3 — Paste your LLM output</div>
+        <p style="font-size:0.82rem;color:var(--text-mid);margin:8px 0 10px;line-height:1.5">
+          Paste every window's JSON object here (concatenated is fine — headers, code fences and stray text are ignored). Overlapping duplicates are dropped automatically, keeping the higher-scored clip.
+        </p>
+        <textarea id="extPaste" class="ext-paste" spellcheck="false" placeholder='Paste the per-window JSON here, e.g.&#10;{ "window_summary": "...", "clips": [ ... ] }&#10;{ "window_summary": "...", "clips": [ ... ] }'></textarea>
+        <div style="margin-top:16px; display:flex; gap:12px;">
+          <button class="btn-process" id="btnExtSubmit" style="flex:1; padding:15px; font-weight:700">▶ Submit &amp; Resume Pipeline</button>
+          <button class="btn-new" id="btnExtCancel" style="margin-top:0; padding:15px; background:var(--surface-2); border-color:var(--border)">Cancel</button>
+        </div>
+        <span class="test-msg" id="extSubmitResult" style="display:block; margin-top:10px; text-align:center"></span>
+      </div>
+    </div>
+
+  </div><!-- /shell -->
+
+  <script>
+    /* ── Inline bootstrap — works even without app.js during preview ── */
+
+    const FALLBACK_CONFIG = {
+      claude_models: [
+        'claude-sonnet-4-20250514',
+        'claude-haiku-4-20250414',
+        'claude-opus-4-20250514',
+        'claude-3-5-sonnet-20241022',
+        'claude-3-5-haiku-20241022',
+        'claude-3-opus-20240229'
+      ],
+      gemini_models: [
+        'gemini-2.5-flash',
+        'gemini-2.5-pro',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro'
+      ],
+      nvidia_models: [
+        'mistralai/mistral-large-3-675b-instruct-2512',
+        'qwen/qwen3.5-397b-a17b',
+        'nvidia/nemotron-3-super-120b-a12b',
+        'mistralai/mistral-medium-3.5-128b',
+        'qwen/qwen3.5-122b-a10b',
+        'openai/gpt-oss-120b',
+        'mistralai/mistral-nemotron',
+        'stockmark/stockmark-2-100b-instruct',
+        'abacusai/dracarys-llama-3.1-70b-instruct',
+        'meta/llama-3.3-70b-instruct',
+        'meta/llama-3.1-70b-instruct',
+        'nvidia/llama-3.3-nemotron-super-49b-v1',
+        'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+        'deepseek-ai/deepseek-v4-flash',
+        'meta/llama-4-maverick-17b-128e-instruct',
+        'nvidia/nvidia-nemotron-nano-9b-v2',
+        'stepfun-ai/step-3.7-flash'
+      ],
+      openai_models: [
+        'gpt-5-nano'
+      ],
+      default_provider: 'nvidia',
+      default_claude_model: 'claude-sonnet-4-20250514',
+      default_gemini_model: 'gemini-2.5-flash',
+      default_nvidia_model: 'mistralai/mistral-large-3-675b-instruct-2512',
+      default_openai_model: 'gpt-5-nano',
+      ai_cross_provider_fallback: false,
+      default_clip_count: 10,
+      default_min_duration: 30,
+      default_max_duration: 90,
+      default_aspect_ratio: '9:16',
+      default_caption_style: 'barlow_black',
+      default_music_volume: 0.10,
+      blog_post_enabled: false,
+      caption_styles: {
+        impact_bold: 'Impact Bold',
+        bebas_neue: 'Bebas Neue',
+        oswald_bold: 'Oswald Bold'
+      },
+      has_anthropic_key: false,
+      has_google_key: false,
+      has_nvidia_key: false,
+      has_openai_key: false,
+      transcription_method: 'smallest',
+      transcription_fallback_order: ['local', 'smallest', 'cpu']
+    };
+
+    let appConfig = { ...FALLBACK_CONFIG };
+    let provider = appConfig.default_provider;
+
+    const urlInput = document.getElementById('videoUrl');
+    const btnProcess = document.getElementById('btnProcess');
+    const btnTestApi = document.getElementById('btnTestApi');
+    const testResult = document.getElementById('testResult');
+    const apiKeyInput = document.getElementById('apiKey');
+    const modelSelect = document.getElementById('modelSelect');
+    const transMethodSelect = document.getElementById('transMethod');
+    const aiFallbackHint = document.getElementById('aiFallbackHint');
+    const transFallbackHint = document.getElementById('transFallbackHint');
+    const clipCountInput = document.getElementById('clipCount');
+    const minDurationInput = document.getElementById('minDuration');
+    const maxDurationInput = document.getElementById('maxDuration');
+    const captionStyleSelect = document.getElementById('captionStyle');
+    const blogPostEnabledInput = document.getElementById('blogPostEnabled');
+    const resumeCaptionStyleSelect = document.getElementById('resumeCaptionStyle');
+    const reburnCaptionStyleSelect = document.getElementById('reburnCaptionStyle');
+    const reburnClipSelect = document.getElementById('reburnClipSelect');
+    const musicFileInput = document.getElementById('musicFile');
+    const musicVolumeInput = document.getElementById('musicVolume');
+
+    function getModels(currentProvider) {
+      if (currentProvider === 'openai') return appConfig.openai_models || [];
+      if (currentProvider === 'nvidia') return appConfig.nvidia_models || [];
+      if (currentProvider === 'claude') return appConfig.claude_models || [];
+      if (currentProvider === 'gemini') return appConfig.gemini_models || [];
+      return appConfig.nvidia_models || [];
+    }
+
+    function getDefaultModel(currentProvider) {
+      if (currentProvider === 'openai') return appConfig.default_openai_model;
+      if (currentProvider === 'nvidia') return appConfig.default_nvidia_model;
+      if (currentProvider === 'claude') return appConfig.default_claude_model;
+      if (currentProvider === 'gemini') return appConfig.default_gemini_model;
+      return appConfig.default_nvidia_model;
+    }
+
+    function providerHasEnvKey(currentProvider) {
+      if (currentProvider === 'openai') return !!appConfig.has_openai_key;
+      if (currentProvider === 'nvidia') return !!appConfig.has_nvidia_key;
+      if (currentProvider === 'claude') return !!appConfig.has_anthropic_key;
+      if (currentProvider === 'gemini') return !!appConfig.has_google_key;
+      return !!appConfig.has_nvidia_key;
+    }
+
+    function providerLabel(currentProvider) {
+      if (currentProvider === 'openai') return 'OpenAI';
+      if (currentProvider === 'nvidia') return 'NVIDIA';
+      if (currentProvider === 'claude') return 'Claude';
+      if (currentProvider === 'gemini') return 'Gemini';
+      return 'NVIDIA';
+    }
+
+    function transcriptionLabel(method) {
+      const labels = {
+        local: 'Local GPU',
+        smallest: 'Smallest.ai STT',
+        cpu: 'Local CPU'
+      };
+      return labels[method] || method;
+    }
+
+    function analysisFallbackLabels() {
+      if (!appConfig.ai_cross_provider_fallback) return [];
+      const fallbacks = [];
+      if (provider !== 'nvidia' && appConfig.has_nvidia_key) fallbacks.push('NVIDIA');
+      if (provider !== 'openai' && appConfig.has_openai_key) fallbacks.push('OpenAI');
+      if (provider !== 'claude' && appConfig.has_anthropic_key) fallbacks.push('Claude');
+      if (provider !== 'gemini' && appConfig.has_google_key) fallbacks.push('Gemini');
+      return fallbacks;
+    }
+
+    function updateFallbackHints() {
+      // Build the model ladder straight from the backend-provided lists so the
+      // hint always reflects config.py (via /api/config) — no hardcoded names.
+      const ladder = getModels(provider).slice(0, 3);
+      const ladderText = ladder.length ? ladder.join(' -> ') : 'configured model fallbacks';
+      const crossFallbacks = analysisFallbackLabels();
+      const crossText = crossFallbacks.length
+        ? ` Then cross-provider: ${crossFallbacks.join(' -> ')}.`
+        : ' No cross-provider fallback.';
+      aiFallbackHint.textContent = `Sequential analysis: ${ladderText}.${crossText}`;
+
+      const method = transMethodSelect.value || appConfig.transcription_method || 'auto';
+      const order = appConfig.transcription_fallback_order || ['local', 'smallest', 'cpu'];
+      transFallbackHint.textContent = method === 'auto'
+        ? `Auto order: ${order.map(transcriptionLabel).join(' -> ')}`
+        : `${transcriptionLabel(method)} only`;
+    }
+
+    function getApiPlaceholder(currentProvider) {
+      if (providerHasEnvKey(currentProvider)) {
+        return '........ (using key from .env file)';
+      }
+      if (currentProvider === 'openai') return 'OpenAI API key...';
+      if (currentProvider === 'nvidia') return 'nvapi-...';
+      if (currentProvider === 'claude') return 'sk-ant-...';
+      if (currentProvider === 'gemini') return 'AIza...';
+      return 'nvapi-...';
+    }
+
+    function resetApiTestState() {
+      testResult.textContent = '';
+      testResult.className = 'test-msg';
+      testResult.style.display = 'none';
+      btnTestApi.textContent = 'Test API';
+    }
+
+    function setModels(currentProvider, selectedModel = '') {
+      const models = getModels(currentProvider);
+      const defaultModel = selectedModel || getDefaultModel(currentProvider) || models[0] || '';
+      modelSelect.innerHTML = models
+        .map((model) => `<option value="${model}"${model === defaultModel ? ' selected' : ''}>${model}</option>`)
+        .join('');
+    }
+
+    function syncProvider(nextProvider, selectedModel = '') {
+      provider = nextProvider;
+      document.querySelectorAll('.provider-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.provider === provider);
+      });
+      setModels(provider, selectedModel);
+      apiKeyInput.placeholder = getApiPlaceholder(provider);
+      resetApiTestState();
+      updateFallbackHints();
+      checkReady();
+    }
+
+    function setCaptionStyles() {
+      const styles = appConfig.caption_styles || {};
+      const defaultStyle = appConfig.default_caption_style || 'viral_impact';
+      const options = Object.entries(styles)
+        .map(([value, label]) => `<option value="${value}"${value === defaultStyle ? ' selected' : ''}>${label}</option>`)
+        .join('');
+      captionStyleSelect.innerHTML = options;
+      if (resumeCaptionStyleSelect) resumeCaptionStyleSelect.innerHTML = options;
+      if (reburnCaptionStyleSelect) reburnCaptionStyleSelect.innerHTML = options;
+    }
+
+    async function loadConfig() {
+      try {
+        const response = await fetch('/api/config');
+        if (response.ok) {
+          const data = await response.json();
+          appConfig = { ...appConfig, ...data };
+        }
+      } catch {}
+
+      clipCountInput.value = appConfig.default_clip_count;
+      minDurationInput.value = appConfig.default_min_duration;
+      maxDurationInput.value = appConfig.default_max_duration;
+      musicVolumeInput.value = Math.round((appConfig.default_music_volume || 0.10) * 100);
+      if (appConfig.default_skip_refinement !== undefined) {
+        document.getElementById('skipRefinement').classList.toggle('active', !!appConfig.default_skip_refinement);
+      }
+      if (appConfig.default_refinement_batch_size !== undefined) {
+        document.getElementById('refinementBatchSize').value = appConfig.default_refinement_batch_size;
+      }
+      if (appConfig.default_skip_compression !== undefined) {
+        document.getElementById('skipCompression').classList.toggle('active', !!appConfig.default_skip_compression);
+      }
+      if (appConfig.default_compression_batch_size !== undefined) {
+        document.getElementById('compressionBatchSize').value = appConfig.default_compression_batch_size;
+      }
+      blogPostEnabledInput.classList.toggle('active', !!appConfig.blog_post_enabled);
+      if (transMethodSelect) transMethodSelect.value = appConfig.transcription_method || 'smallest';
+      setCaptionStyles();
+
+      document.querySelectorAll('.aspect-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.ratio === appConfig.default_aspect_ratio);
+      });
+
+      bindRange('clipCount', 'clipCountVal');
+      bindRange('minDuration', 'minDurationVal', 's');
+      bindRange('maxDuration', 'maxDurationVal', 's');
+      bindRange('musicVolume', 'musicVolumeVal', '%');
+      bindRange('resumeMusicVolume', 'resumeMusicVolumeVal', '%');
+      bindRange('reburnMusicVolume', 'reburnMusicVolumeVal', '%');
+
+      // TTS Hook UI setup
+      const ttsHookToggle = document.getElementById('ttsHookToggle');
+      const ttsHookSettings = document.getElementById('ttsHookSettings');
+      if (appConfig.tts_hook_enabled !== undefined) {
+        ttsHookToggle.classList.toggle('active', !!appConfig.tts_hook_enabled);
+        ttsHookSettings.style.display = appConfig.tts_hook_enabled ? 'block' : 'none';
+      }
+      if (appConfig.tts_hook_voice_id) {
+        document.getElementById('ttsVoiceId').value = appConfig.tts_hook_voice_id;
+      }
+      if (appConfig.tts_hook_sample_rate) {
+        document.getElementById('ttsSampleRate').value = appConfig.tts_hook_sample_rate;
+      }
+      if (appConfig.tts_hook_speed) {
+        document.getElementById('ttsSpeed').value = appConfig.tts_hook_speed;
+      }
+      if (appConfig.tts_hook_font_size_pct) {
+        document.getElementById('ttsFontSize').value = appConfig.tts_hook_font_size_pct;
+      }
+      if (appConfig.tts_hook_text_placement) {
+        document.getElementById('ttsPlacement').value = appConfig.tts_hook_text_placement;
+      }
+      if (appConfig.tts_hook_text_color) {
+        document.getElementById('ttsTextColor').value = appConfig.tts_hook_text_color;
+      }
+      if (appConfig.tts_hook_text_color_revealed) {
+        document.getElementById('ttsTextColorRevealed').value = appConfig.tts_hook_text_color_revealed;
+      }
+      bindRange('ttsSpeed', 'ttsSpeedVal', '×');
+      bindRange('ttsFontSize', 'ttsFontSizeVal', '%');
+      ttsHookToggle.addEventListener('click', () => {
+        const isAct = ttsHookToggle.classList.toggle('active');
+        ttsHookSettings.style.display = isAct ? 'block' : 'none';
+      });
+
+      // Bind click listeners to all toggle switches to toggle 'active' class on click
+      document.querySelectorAll('.switch').forEach(sw => {
+        if (sw.id === 'ttsHookToggle') return;
+        sw.addEventListener('click', () => {
+          sw.classList.toggle('active');
+          if (sw.id === 'clipCountAll') {
+            const isAll = sw.classList.contains('active');
+            clipCountInput.disabled = isAll;
+            clipCountInput.style.opacity = isAll ? '0.5' : '1.0';
+            document.getElementById('clipCountVal').style.opacity = isAll ? '0.5' : '1.0';
+          }
+        });
+      });
+
+      syncProvider(appConfig.default_provider || 'nvidia');
+      updateFallbackHints();
+
+      // Analysis source (manual vs API) — dim the API-only controls in manual mode.
+      const analysisModeSel = document.getElementById('analysisMode');
+      if (analysisModeSel) {
+        if (appConfig.default_analysis_mode) analysisModeSel.value = appConfig.default_analysis_mode;
+        const applyAnalysisMode = () => {
+          const manual = analysisModeSel.value === 'manual';
+          document.querySelectorAll('.api-only').forEach(el => { el.style.display = manual ? 'none' : ''; });
+          const hint = document.getElementById('analysisModeHint');
+          if (hint) hint.textContent = manual
+            ? 'Manual: the run pauses after transcription and hands you the transcript windows + system prompt to run in any chat LLM; paste the results back to continue. No API key used.'
+            : 'API: the selected provider is called automatically to find clips.';
+        };
+        analysisModeSel.addEventListener('change', applyAnalysisMode);
+        applyAnalysisMode();
+      }
+    }
+
+    document.querySelectorAll('.provider-btn').forEach((btn) => {
+      btn.addEventListener('click', () => syncProvider(btn.dataset.provider));
+    });
+
+    /* Aspect ratio toggle */
+    document.querySelectorAll('.aspect-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.aspect-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+
+    /* Range live values */
+    function bindRange(id, valId, unit = '') {
+      const range = document.getElementById(id);
+      const value = document.getElementById(valId);
+      const update = () => { value.textContent = range.value + unit; };
+      range.addEventListener('input', update);
+      update();
+    }
+
+    /* URL validation → enable button */
+    function isYoutubeUrl(rawValue) {
+      try {
+        const parsed = new URL(rawValue);
+        const host = parsed.hostname.replace(/^www\./, '');
+        return host === 'youtube.com' || host === 'youtu.be' || host.endsWith('.youtube.com');
+      } catch {
+        return false;
+      }
+    }
+
+    function checkReady() {
+      const isUrlValid = isYoutubeUrl(urlInput.value.trim());
+      document.getElementById('btnDownloadOnly').disabled = !isUrlValid;
+      const hasKey = apiKeyInput.value.trim() || providerHasEnvKey(provider);
+      btnTestApi.disabled = !hasKey;
+      btnProcess.disabled = !(isUrlValid && hasKey);
+    }
+
+    async function testApiConnection() {
+      const hasKey = apiKeyInput.value.trim() || providerHasEnvKey(provider);
+      if (!hasKey) {
+        testResult.textContent = 'No API key provided';
+        testResult.className = 'test-msg err';
+        testResult.style.display = 'inline';
+        return;
+      }
+
+      btnTestApi.disabled = true;
+      btnTestApi.textContent = 'Testing...';
+      testResult.textContent = `Testing ${providerLabel(provider)}...`;
+      testResult.className = 'test-msg';
+      testResult.style.display = 'inline';
+
+      try {
+        const response = await fetch('/api/test-api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider,
+            api_key: apiKeyInput.value.trim(),
+            model: modelSelect.value,
+          }),
+        });
+        const data = await response.json();
+        if (data.success) {
+          testResult.textContent = data.message || `Connected to ${providerLabel(provider)}`;
+          testResult.className = 'test-msg ok';
+        } else {
+          testResult.textContent = data.message || 'API test failed';
+          testResult.className = 'test-msg err';
+        }
+      } catch (error) {
+        testResult.textContent = 'Connection error: ' + error.message;
+        testResult.className = 'test-msg err';
+      } finally {
+        btnTestApi.textContent = 'Test API';
+        checkReady();
+      }
+    }
+
+    urlInput.addEventListener('input', checkReady);
+    apiKeyInput.addEventListener('input', () => { resetApiTestState(); checkReady(); });
+    modelSelect.addEventListener('change', () => { resetApiTestState(); checkReady(); });
+    btnTestApi.addEventListener('click', testApiConnection);
+    transMethodSelect.addEventListener('change', updateFallbackHints);
+
+    /* Resume Pipeline — show/hide clip selector based on stage */
+    const resumeStageEl  = document.getElementById('resumeStage');
+    const resumeSingleEl = document.getElementById('resumeSingleStage');
+    const resumeClipGrp  = document.getElementById('resumeClipGroup');
+    function _updateResumeClipVisibility() {
+      const cap = resumeStageEl.value === 'caption' || resumeSingleEl.value === 'caption';
+      resumeClipGrp.style.display = cap ? '' : 'none';
+      // Single-stage mode makes the "Resume From" dropdown irrelevant
+      resumeStageEl.disabled = !!resumeSingleEl.value;
+    }
+    resumeStageEl.addEventListener('change', _updateResumeClipVisibility);
+    resumeSingleEl.addEventListener('change', _updateResumeClipVisibility);
+    _updateResumeClipVisibility(); // run once on load
+
+    /* Resume Pipeline — show/hide music inputs based on mode */
+    const resumeMusicModeSelect = document.getElementById('resumeMusicMode');
+    const resumeMusicUrlGroup = document.getElementById('resumeMusicUrlGroup');
+    const resumeMusicFileGroup = document.getElementById('resumeMusicFileGroup');
+    function _updateResumeMusicVisibility() {
+      const mode = resumeMusicModeSelect.value;
+      if (mode === 'link') {
+        resumeMusicUrlGroup.classList.remove('hidden');
+        resumeMusicFileGroup.classList.add('hidden');
+      } else if (mode === 'upload') {
+        resumeMusicUrlGroup.classList.add('hidden');
+        resumeMusicFileGroup.classList.remove('hidden');
+      } else {
+        resumeMusicUrlGroup.classList.add('hidden');
+        resumeMusicFileGroup.classList.add('hidden');
+      }
+    }
+    resumeMusicModeSelect.addEventListener('change', _updateResumeMusicVisibility);
+    _updateResumeMusicVisibility(); // run once on load
+
+    document.getElementById('btnResume').addEventListener('click', async () => {
+      const folder = document.getElementById('resumeFolder').value.trim();
+      const stage = document.getElementById('resumeStage').value;
+      const el = document.getElementById('resumeResult');
+      if (!folder) {
+        el.textContent = 'Enter a folder path first';
+        el.className = 'test-msg err';
+        return;
+      }
+      el.textContent = '⏳ Starting resume...';
+      el.className = 'test-msg';
+      const captionStyle = (resumeCaptionStyleSelect && resumeCaptionStyleSelect.value) || captionStyleSelect.value;
+      const selectedClips = (document.getElementById('resumeClipNames').value || 'all').trim() || 'all';
+      try {
+        const resumeMusicUrlVal = document.getElementById('resumeMusicUrl').value.trim();
+        const resumeMusicVolumeVal = document.getElementById('resumeMusicVolume').value.trim();
+        const resumeMusicStartTimeVal = document.getElementById('resumeMusicStartTime').value.trim();
+        const musicMode = resumeMusicModeSelect.value;
+
+        const payload = {
+          job_folder: folder,
+          resume_from: stage,
+          single_stage: resumeSingleEl.value,
+          ai_provider: provider,
+          api_key: apiKeyInput.value.trim(),
+          ai_model: modelSelect.value,
+          clip_count: +clipCountInput.value,
+          get_all_clips: document.getElementById('clipCountAll').classList.contains('active'),
+          min_duration: +minDurationInput.value,
+          max_duration: +maxDurationInput.value,
+          caption_style: captionStyle,
+          caption_font_size: +document.getElementById('resumeCaptionFontSize').value || 165,
+          caption_output_suffix: captionStyle,
+          preserve_caption_variants: true,
+          skip_copywriting: document.getElementById('skipCopywriting').classList.contains('active') || stage === 'caption' || stage === 'extract' || !!resumeSingleEl.value,
+          enable_reasoning: document.getElementById('enableReasoning').classList.contains('active'),
+          skip_refinement: document.getElementById('skipRefinement').classList.contains('active'),
+            skip_stitch_pass: document.getElementById('skipStitch').classList.contains('active'),
+          refinement_batch_size: +document.getElementById('refinementBatchSize').value || 5,
+          skip_compression: document.getElementById('skipCompression').classList.contains('active'),
+          compression_batch_size: +document.getElementById('compressionBatchSize').value || 10,
+          skip_judge: document.getElementById('skipJudge').classList.contains('active'),
+          skip_validation: document.getElementById('skipValidation').classList.contains('active'),
+          skip_duplication: document.getElementById('skipDuplication').classList.contains('active'),
+          allow_overlaps: document.getElementById('allowOverlaps').classList.contains('active'),
+          skip_duration_floor: document.getElementById('skipDurationFloor').classList.contains('active'),
+          enable_nano_tiebreak: document.getElementById('enableNanoTiebreak').classList.contains('active'),
+          blog_post_enabled: blogPostEnabledInput.classList.contains('active'),
+          analysis_window_seconds: +document.getElementById('analysisWindow').value || 900,
+          analysis_overlap_seconds: +document.getElementById('analysisOverlap').value || 180,
+          selected_clips: stage === 'caption' ? selectedClips : 'all',
+          aspect_ratio: document.querySelector('.aspect-btn.active').dataset.ratio,
+          transcription_method: document.getElementById('transMethod').value,
+          smallest_key: document.getElementById('smallestKey').value.trim(),
+          pause_before_captioning: document.getElementById('pauseBeforeCaptioning').classList.contains('active'),
+          tts_hook_mode:        document.getElementById('resumeTtsMode').value,
+          tts_hook_enabled:     document.getElementById('ttsHookToggle').classList.contains('active'),
+          tts_hook_voice_id:    document.getElementById('ttsVoiceId').value,
+          tts_hook_sample_rate: +document.getElementById('ttsSampleRate').value,
+          tts_hook_speed:       +document.getElementById('ttsSpeed').value,
+          tts_hook_font_size_pct: +document.getElementById('ttsFontSize').value,
+          tts_hook_text_placement: document.getElementById('ttsPlacement').value,
+          tts_hook_text_color:    document.getElementById('ttsTextColor').value,
+          tts_hook_text_color_revealed: document.getElementById('ttsTextColorRevealed').value,
+          music_mode: musicMode,
+          music_url: musicMode === 'link' ? resumeMusicUrlVal : '',
+          music_volume: resumeMusicVolumeVal !== '' ? (+resumeMusicVolumeVal || 0) / 100 : '',
+          music_start_time: resumeMusicStartTimeVal !== '' ? +resumeMusicStartTimeVal : '',
+        };
+
+        const formData = new FormData();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value !== null && value !== undefined && value !== '') {
+            formData.append(key, value);
+          }
+        });
+
+        const resumeMusicFile = document.getElementById('resumeMusicFile');
+        if (musicMode === 'upload' && resumeMusicFile.files && resumeMusicFile.files[0]) {
+          formData.append('resume_music_file', resumeMusicFile.files[0]);
+        }
+
+        const response = await fetch('/api/resume', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await response.json();
+        if (data.error) {
+          el.textContent = '✗ ' + data.error;
+          el.className = 'test-msg err';
+          return;
+        }
+        el.textContent = '✓ Resuming...';
+        el.className = 'test-msg ok';
+        window._currentJobId = data.job_id;
+        showState('stateProcessing');
+        pollJob(data.job_id);
+      } catch (e) {
+        el.textContent = '✗ Connection error: ' + e.message;
+        el.className = 'test-msg err';
+      }
+    });
+
+    /* Download Video Only */
+    document.getElementById('btnDownloadOnly').addEventListener('click', async () => {
+      const url = urlInput.value.trim();
+      if (!url) return;
+      
+      const btn = document.getElementById('btnDownloadOnly');
+      const el = document.getElementById('downloadResult');
+      btn.disabled = true;
+      el.textContent = '⏳ Initializing download...';
+      el.className = 'test-msg';
+      
+      try {
+        const response = await fetch('/api/download-direct', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await response.json();
+        if (data.success && data.job_id) {
+          const jobId = data.job_id;
+          const evtSource = new EventSource(`/api/progress/${jobId}`);
+          
+          evtSource.onmessage = (event) => {
+            try {
+              const d = JSON.parse(event.data);
+              if (d.status === 'processing' || d.status === 'starting') {
+                el.textContent = `⏳ ${d.message || 'Downloading...'}`;
+              } else if (d.status === 'done') {
+                evtSource.close();
+                btn.disabled = false;
+                
+                const downloadUrl = `/api/download-file-direct/${d.n}/${d.safe_title}/${d.video_filename}`;
+                el.innerHTML = `✓ Downloaded. <a href="${downloadUrl}" target="_blank" style="color:var(--teal)">Click here to save</a>`;
+                el.className = 'test-msg ok';
+                
+                // auto trigger download
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = '';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              } else if (d.status === 'error') {
+                evtSource.close();
+                btn.disabled = false;
+                el.textContent = '✗ ' + (d.message || 'Download failed');
+                el.className = 'test-msg err';
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          };
+          
+          evtSource.onerror = () => {
+            evtSource.close();
+            btn.disabled = false;
+            el.textContent = '✗ Connection lost during download';
+            el.className = 'test-msg err';
+          };
+        } else {
+          btn.disabled = false;
+          el.textContent = '✗ ' + (data.message || 'Download failed');
+          el.className = 'test-msg err';
+        }
+      } catch (e) {
+        btn.disabled = false;
+        el.textContent = '✗ Connection error';
+        el.className = 'test-msg err';
+      }
+    });
+
+    /* Process */
+    btnProcess.addEventListener('click', async () => {
+      btnProcess.disabled = true;
+      btnProcess.textContent = 'Starting...';
+      resetProgressUi();
+      try {
+        const payload = {
+          url: urlInput.value.trim(),
+          analysis_mode: document.getElementById('analysisMode').value,
+          ai_provider: provider,
+          api_key: apiKeyInput.value.trim(),
+          ai_model: modelSelect.value,
+          clip_count: +clipCountInput.value,
+          get_all_clips: document.getElementById('clipCountAll').classList.contains('active'),
+          min_duration: +minDurationInput.value,
+          max_duration: +maxDurationInput.value,
+          caption_style: captionStyleSelect.value,
+          caption_font_size: +document.getElementById('captionFontSize').value || 190,
+          aspect_ratio: document.querySelector('.aspect-btn.active').dataset.ratio,
+          transcription_method: document.getElementById('transMethod').value,
+          smallest_key: document.getElementById('smallestKey').value.trim(),
+          tts_hook_enabled:     document.getElementById('ttsHookToggle').classList.contains('active'),
+          tts_hook_voice_id:    document.getElementById('ttsVoiceId').value,
+          tts_hook_sample_rate: +document.getElementById('ttsSampleRate').value,
+          tts_hook_speed:       +document.getElementById('ttsSpeed').value,
+          tts_hook_font_size_pct: +document.getElementById('ttsFontSize').value,
+          tts_hook_text_placement: document.getElementById('ttsPlacement').value,
+          tts_hook_text_color:    document.getElementById('ttsTextColor').value,
+          tts_hook_text_color_revealed: document.getElementById('ttsTextColorRevealed').value,
+          music_url: document.getElementById('musicUrl').value.trim(),
+          music_volume: (+musicVolumeInput.value || 0) / 100,
+          music_start_time: document.getElementById('musicStartTime').value.trim() ? +document.getElementById('musicStartTime').value : null,
+          skip_copywriting: document.getElementById('skipCopywriting').classList.contains('active'),
+          enable_reasoning: document.getElementById('enableReasoning').classList.contains('active'),
+          skip_refinement: document.getElementById('skipRefinement').classList.contains('active'),
+            skip_stitch_pass: document.getElementById('skipStitch').classList.contains('active'),
+          refinement_batch_size: +document.getElementById('refinementBatchSize').value || 5,
+          skip_compression: document.getElementById('skipCompression').classList.contains('active'),
+          compression_batch_size: +document.getElementById('compressionBatchSize').value || 10,
+          skip_judge: document.getElementById('skipJudge').classList.contains('active'),
+          skip_validation: document.getElementById('skipValidation').classList.contains('active'),
+          skip_duplication: document.getElementById('skipDuplication').classList.contains('active'),
+          allow_overlaps: document.getElementById('allowOverlaps').classList.contains('active'),
+          skip_duration_floor: document.getElementById('skipDurationFloor').classList.contains('active'),
+          enable_nano_tiebreak: document.getElementById('enableNanoTiebreak').classList.contains('active'),
+          pause_before_captioning: document.getElementById('pauseBeforeCaptioning').classList.contains('active'),
+          blog_post_enabled: blogPostEnabledInput.classList.contains('active'),
+          analysis_window_seconds: +document.getElementById('analysisWindow').value || 900,
+          analysis_overlap_seconds: +document.getElementById('analysisOverlap').value || 180,
+        };
+        const formData = new FormData();
+        Object.entries(payload).forEach(([key, value]) => formData.append(key, value));
+        if (musicFileInput.files && musicFileInput.files[0]) {
+          formData.append('music_file', musicFileInput.files[0]);
+        }
+        const response = await fetch('/api/process', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await response.json();
+        if (response.status === 409) {
+          alert(data.error || 'This URL is already being processed.');
+          btnProcess.disabled = false;
+          btnProcess.textContent = 'Process Video';
+          return;
+        }
+        if (data.error) {
+          alert(data.error);
+          btnProcess.disabled = false;
+          btnProcess.textContent = 'Process Video';
+          return;
+        }
+        window._currentJobId = data.job_id;
+        showState('stateProcessing');
+        pollJob(data.job_id);
+      } catch (error) {
+        alert('Connection error: ' + error.message);
+        btnProcess.disabled = false;
+        btnProcess.textContent = 'Process Video';
+        return;
+      }
+      return;
+      /*
+      btnProcess.textContent = '⏳ Starting...';
+
+      return;
+      try {
+        const r = await fetch('/api/process', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (r.status === 409) {
+          alert(d.error || 'This URL is already being processed.');
+          btnProcess.disabled = false;
+          btnProcess.textContent = '⚡ Process Video';
+          return;
+        }
+        if (d.error) {
+          alert(d.error);
+          btnProcess.disabled = false;
+          btnProcess.textContent = '⚡ Process Video';
+          return;
+        }
+        window._currentJobId = d.job_id;
+        showState('stateProcessing');
+        pollJob(d.job_id);
+      } catch (e) {
+        alert('Connection error: ' + e.message);
+        btnProcess.disabled = false;
+        btnProcess.textContent = '⚡ Process Video';
+      }
+      */
+    });
+
+    loadConfig();
+
+    /* State switcher */
+    function showState(id) {
+      ['stateInput','stateProcessing','stateResults','stateReview','stateExternalLlm'].forEach(s => {
+        document.getElementById(s).classList.toggle('hidden', s !== id);
+      });
+    }
+
+    /* Stage display names */
+    const STAGE_ORDER = ['downloading','transcribing','analyzing','selecting','extracting','captioning','copywriting','blogging','packaging'];
+
+    function resetProgressUi() {
+      document.getElementById('progressFill').style.width = '0%';
+      document.getElementById('progressPct').textContent = '0%';
+      document.getElementById('progressStage').textContent = 'Starting pipeline...';
+      document.getElementById('logContent').textContent = 'Waiting for output...';
+      const errBanner = document.getElementById('errorBanner');
+      errBanner.style.display = 'none';
+      errBanner.innerHTML = '';
+      STAGE_ORDER.forEach(s => {
+        const el = document.getElementById('stage-' + s);
+        if (el) el.className = 'stage';
+      });
+    }
+
+    /* Poll */
+    async function pollJob(jobId) {
+      const fill  = document.getElementById('progressFill');
+      const pct   = document.getElementById('progressPct');
+      const label = document.getElementById('progressStage');
+      const log   = document.getElementById('logContent');
+      const errBanner = document.getElementById('errorBanner');
+
+      /* Try SSE first, fallback to polling */
+      let evtSource;
+      let lastServerEventAt = Date.now();
+      let lastProgressUpdateAt = Date.now();
+      let pollingStarted = false;
+      const switchToPolling = () => {
+        if (pollingStarted) return;
+        pollingStarted = true;
+        if (evtSource) evtSource.close();
+        startPolling(jobId);
+      };
+      if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+      window._progressWatchdog = setInterval(() => {
+        if (Date.now() - lastServerEventAt > 45000) {
+          label.textContent = 'Reconnecting progress after a quiet API response...';
+          switchToPolling();
+        } else if (Date.now() - lastProgressUpdateAt > 60000) {
+          label.textContent = 'Refreshing progress while the API finishes its response...';
+          refreshJobSnapshot(jobId);
+        }
+      }, 15000);
+      try {
+        evtSource = new EventSource(`/api/progress/${jobId}`);
+        evtSource.onmessage = (event) => {
+          try {
+            lastServerEventAt = Date.now();
+            const d = JSON.parse(event.data);
+            if (!d.heartbeat) lastProgressUpdateAt = Date.now();
+            const p = Math.max(0, Math.min(100, d.progress || 0));
+            fill.style.width = p + '%';
+            pct.textContent  = p + '%';
+            label.textContent = d.heartbeat && d.stale_seconds > 60
+              ? (d.message || 'Processing...') + ' Still working; refreshing status...'
+              : (d.message || 'Processing...');
+
+            const currentIdx = STAGE_ORDER.indexOf(d.stage);
+            STAGE_ORDER.forEach((s, i) => {
+              const el = document.getElementById('stage-' + s);
+              if (!el) return;
+              el.className = 'stage' + (i < currentIdx ? ' done' : i === currentIdx ? ' active' : '');
+            });
+
+            if (d.status === 'done') {
+              evtSource.close();
+              if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+              loadResults(jobId);
+            } else if (d.status === 'paused_for_review') {
+              evtSource.close();
+              if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+              loadReviewPlan(jobId);
+            } else if (d.status === 'paused_for_external_llm') {
+              evtSource.close();
+              if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+              loadExternalLlmPanel(jobId);
+            } else if (d.status === 'error') {
+              evtSource.close();
+              if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+              errBanner.innerHTML = errorRetryActions(jobId, d);
+              errBanner.style.display = 'block';
+            }
+          } catch(e) {}
+        };
+        evtSource.onerror = switchToPolling;
+      } catch {
+        switchToPolling();
+      }
+
+      /* Log polling */
+      const logIv = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/logs/${jobId}?lines=30`);
+          const d = await r.json();
+          if (d.log) { log.textContent = d.log; log.scrollTop = log.scrollHeight; }
+        } catch {}
+      }, 3000);
+      window._logInterval = logIv;
+    }
+
+    function startPolling(jobId) {
+      const fill  = document.getElementById('progressFill');
+      const pct   = document.getElementById('progressPct');
+      const label = document.getElementById('progressStage');
+      const errBanner = document.getElementById('errorBanner');
+
+      const iv = setInterval(async () => {
+        try {
+          const d = await refreshJobSnapshot(jobId);
+          if (!d || d.error) return;
+
+           if (d.status === 'done') {
+            clearInterval(iv);
+            loadResults(jobId);
+          } else if (d.status === 'paused_for_review') {
+            clearInterval(iv);
+            if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+            loadReviewPlan(jobId);
+          } else if (d.status === 'paused_for_external_llm') {
+            clearInterval(iv);
+            if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+            loadExternalLlmPanel(jobId);
+          } else if (d.status === 'error') {
+            clearInterval(iv);
+            if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+            errBanner.innerHTML = errorRetryActions(jobId, d);
+            errBanner.style.display = 'block';
+          }
+        } catch(e) {}
+      }, 2000);
+    }
+
+    async function refreshJobSnapshot(jobId) {
+      const fill  = document.getElementById('progressFill');
+      const pct   = document.getElementById('progressPct');
+      const label = document.getElementById('progressStage');
+      const r = await fetch(`/api/job/${jobId}?t=${Date.now()}`, { cache: 'no-store' });
+      const d = await r.json();
+      if (d && !d.error) {
+        const p = Math.max(0, Math.min(100, d.progress || 0));
+        fill.style.width = p + '%';
+        pct.textContent  = p + '%';
+        label.textContent = d.stale_seconds > 60
+          ? (d.message || 'Processing...') + ' Still working; refreshed.'
+          : (d.message || 'Processing...');
+      }
+      return d;
+    }
+
+    async function loadResults(jobId) {
+      if (window._logInterval) clearInterval(window._logInterval);
+      if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+      try {
+        let reburnClips = 'all';
+        try {
+          const rJob = await fetch(`/api/job/${jobId}`);
+          if (rJob.ok) {
+            const jobData = await rJob.json();
+            if (jobData && jobData.settings) {
+              reburnClips = jobData.settings.reburn_clips || 'all';
+            }
+          }
+        } catch (jobErr) {
+          console.warn('Could not fetch job metadata:', jobErr);
+        }
+
+        const r = await fetch(`/api/results/${jobId}`);
+        const results = await r.json();
+        results._jobId = jobId;
+        results._reburnClips = reburnClips;
+        renderResults(results);
+        showState('stateResults');
+      } catch(e) { console.error('Failed to load results:', e); }
+    }
+
+    /* Split the manual-analysis text into a metadata block + one block per
+       '=== AI ANALYSIS WINDOW n ===' section, each with a one-click copy.
+       Window blocks keep their header line so each can be pasted as its own
+       message; the metadata block holds the preamble + VIDEO METADATA. */
+    function renderWindowBlocks(fullText) {
+      const container = document.getElementById('extWindowsBlocks');
+      if (!container) return;
+      container.innerHTML = '';
+      const text = String(fullText || '');
+      if (!text.trim() || text.trim() === '(no windows file was written)') {
+        container.innerHTML = '<div class="ext-empty">(no windows file was written)</div>';
+        return;
+      }
+
+      const headerRe = /^=== AI ANALYSIS WINDOW .*===\s*$/;
+      const parts = [];
+      let cur = { header: null, body: [] };
+      const nonEmpty = () => cur.header !== null || cur.body.some(l => l.trim());
+      text.split('\n').forEach((line) => {
+        if (headerRe.test(line)) {
+          if (nonEmpty()) parts.push(cur);
+          cur = { header: line.trim(), body: [] };
+        } else {
+          cur.body.push(line);
+        }
+      });
+      if (nonEmpty()) parts.push(cur);
+
+      parts.forEach((part) => {
+        const isMeta = part.header === null;
+        let title, copyText, btnLabel;
+        if (isMeta) {
+          title = '📋 Metadata';
+          btnLabel = 'Copy metadata';
+          copyText = part.body.join('\n').replace(/^\n+|\n+$/g, '');
+        } else {
+          const m = part.header.match(/AI ANALYSIS WINDOW\s+(\d+)\s+of\s+(\d+)\s*:\s*(.*?)\s*===/);
+          const num = m ? m[1] : '?';
+          title = m ? `🎞️ Window ${num} of ${m[2]}  ·  ${m[3].replace('->', '→')}` : part.header;
+          btnLabel = `Copy Window ${num}`;
+          copyText = (part.header + '\n' + part.body.join('\n')).replace(/\n+$/g, '');
+        }
+
+        const block = document.createElement('div');
+        block.className = 'ext-block';
+
+        const hd = document.createElement('div');
+        hd.className = 'ext-block-hd';
+        const ttl = document.createElement('span');
+        ttl.className = 'ext-block-title';
+        ttl.textContent = title;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn-test';
+        btn.textContent = btnLabel;
+        const msg = document.createElement('span');
+        msg.className = 'test-msg';
+        msg.style.display = 'none';
+        hd.appendChild(ttl); hd.appendChild(btn); hd.appendChild(msg);
+
+        const ta = document.createElement('textarea');
+        ta.className = 'ext-readonly';
+        ta.readOnly = true;
+        ta.spellcheck = false;
+        ta.value = copyText;
+
+        btn.addEventListener('click', () => extCopyText(copyText, msg));
+
+        block.appendChild(hd);
+        block.appendChild(ta);
+        container.appendChild(block);
+      });
+    }
+
+    function extCopyText(text, msgEl) {
+      const done = () => {
+        if (!msgEl) return;
+        msgEl.textContent = '✓ Copied'; msgEl.className = 'test-msg ok'; msgEl.style.display = 'inline';
+        setTimeout(() => { msgEl.style.display = 'none'; }, 2000);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => extFallbackCopy(text, done));
+      } else {
+        extFallbackCopy(text, done);
+      }
+    }
+
+    function extFallbackCopy(text, done) {
+      try {
+        const t = document.createElement('textarea');
+        t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+        document.body.appendChild(t); t.select(); document.execCommand('copy');
+        document.body.removeChild(t); done();
+      } catch {}
+    }
+
+    async function loadExternalLlmPanel(jobId) {
+      if (window._logInterval) clearInterval(window._logInterval);
+      if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+      window._extJobId = jobId;
+      showState('stateExternalLlm');
+
+      const promptEl = document.getElementById('extSystemPrompt');
+      const windowsEl = document.getElementById('extWindows');
+      const submitResult = document.getElementById('extSubmitResult');
+      submitResult.textContent = '';
+      submitResult.className = 'test-msg';
+      promptEl.value = 'Loading system prompt...';
+      windowsEl.value = 'Loading windows...';
+      const blocksEl = document.getElementById('extWindowsBlocks');
+      if (blocksEl) blocksEl.innerHTML = '<div class="ext-empty">Loading windows…</div>';
+
+      try {
+        const rJob = await fetch(`/api/job/${jobId}`);
+        if (rJob.ok) {
+          const jobData = await rJob.json();
+          document.getElementById('extVideoTitle').textContent = jobData.display_name || jobId;
+        }
+      } catch {}
+
+      try {
+        const r = await fetch(`/api/external-llm/${jobId}`);
+        const d = await r.json();
+        if (d.error) { promptEl.value = 'Error: ' + d.error; windowsEl.value = ''; renderWindowBlocks(''); return; }
+        promptEl.value = d.system_prompt || '(pipeline/prompts.txt not found)';
+        windowsEl.value = d.windows_text || '(no windows file was written)';
+        renderWindowBlocks(windowsEl.value);
+        document.getElementById('extPromptPath').textContent = d.system_prompt_path ? ('· ' + d.system_prompt_path) : '';
+        const wc = (String(d.windows_text || '').match(/=== AI ANALYSIS WINDOW /g) || []).length;
+        document.getElementById('extWindowCount').textContent = wc ? ('· ' + wc + ' window' + (wc === 1 ? '' : 's')) : '';
+      } catch (e) {
+        promptEl.value = 'Failed to load manual-analysis inputs: ' + e.message;
+        renderWindowBlocks('');
+      }
+    }
+
+    /* Manual-analysis panel button wiring (runs once; elements exist at load). */
+    (function initExtPanel() {
+      const copyFrom = (srcId, msgId) => {
+        const el = document.getElementById(srcId);
+        if (!el) return;
+        const done = () => {
+          const m = document.getElementById(msgId);
+          if (!m) return;
+          m.textContent = '✓ Copied'; m.className = 'test-msg ok'; m.style.display = 'inline';
+          setTimeout(() => { m.style.display = 'none'; }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(el.value).then(done).catch(() => {
+            try { el.select(); document.execCommand('copy'); done(); } catch {}
+          });
+        } else {
+          try { el.select(); document.execCommand('copy'); done(); } catch {}
+        }
+      };
+      const cp = document.getElementById('btnCopyPrompt');
+      if (cp) cp.addEventListener('click', () => copyFrom('extSystemPrompt', 'extPromptCopied'));
+      const cw = document.getElementById('btnCopyWindows');
+      if (cw) cw.addEventListener('click', () => copyFrom('extWindows', 'extWindowsCopied'));
+      const cancel = document.getElementById('btnExtCancel');
+      if (cancel) cancel.addEventListener('click', () => showState('stateInput'));
+      const submit = document.getElementById('btnExtSubmit');
+      if (submit) submit.addEventListener('click', async () => {
+        const jobId = window._extJobId;
+        const paste = (document.getElementById('extPaste').value || '').trim();
+        const res = document.getElementById('extSubmitResult');
+        if (!paste) { res.textContent = 'Paste your LLM output first.'; res.className = 'test-msg err'; return; }
+        submit.disabled = true; submit.textContent = '⏳ Submitting...';
+        res.textContent = ''; res.className = 'test-msg';
+        try {
+          const r = await fetch('/api/resume', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_folder: jobId, resume_from: 'analyze', analysis_mode: 'manual', external_llm_text: paste })
+          });
+          const d = await r.json();
+          if (d.error) {
+            res.textContent = '✗ ' + d.error; res.className = 'test-msg err';
+            submit.disabled = false; submit.textContent = '▶ Submit & Resume Pipeline';
+            return;
+          }
+          window._currentJobId = d.job_id;
+          resetProgressUi();
+          showState('stateProcessing');
+          pollJob(d.job_id);
+        } catch (e) {
+          res.textContent = '✗ Connection error: ' + e.message; res.className = 'test-msg err';
+          submit.disabled = false; submit.textContent = '▶ Submit & Resume Pipeline';
+        }
+      });
+    })();
+
+    async function loadReviewPlan(jobId) {
+      if (window._logInterval) clearInterval(window._logInterval);
+      if (window._progressWatchdog) clearInterval(window._progressWatchdog);
+
+      const container = document.getElementById('reviewClipsContainer');
+      const videoTitleEl = document.getElementById('reviewVideoTitle');
+      const saveResult = document.getElementById('reviewSaveResult');
+      
+      saveResult.textContent = '';
+      container.innerHTML = '⏳ Loading clips plan...';
+      showState('stateReview');
+      
+      try {
+        try {
+          const rJob = await fetch(`/api/job/${jobId}`);
+          if (rJob.ok) {
+            const jobData = await rJob.json();
+            videoTitleEl.textContent = jobData.display_name || jobId;
+          }
+        } catch {}
+
+        const r = await fetch(`/api/clips-plan/${jobId}`);
+        if (!r.ok) {
+          container.innerHTML = '✗ Failed to load clips plan: ' + r.statusText;
+          return;
+        }
+        
+        const clips = await r.json();
+        if (!clips || clips.length === 0) {
+          container.innerHTML = 'No clips found in clips plan.';
+          return;
+        }
+        
+        container.innerHTML = '';
+        clips.forEach((clip, i) => {
+          const row = document.createElement('div');
+          row.className = 'review-clip-row';
+          row.dataset.clipName = clip.clip_name;
+          
+          const start = clip.segments[0].start;
+          const end = clip.segments[0].end;
+          const duration = clip.total_duration || (end - start);
+          
+          row.innerHTML = `
+            <div class="review-clip-header" style="justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 16px;">
+              <span style="font-weight: 800; font-size: 1.1rem; color: var(--teal);">CLIP ${String(i+1).padStart(2, '0')} (${clip.clip_name})</span>
+              <span style="display:flex; align-items:center; gap:10px;">
+                <span class="review-time-badge">⏱ ${start.toFixed(2)}s → ${end.toFixed(2)}s (${duration.toFixed(1)}s)</span>
+                <button type="button" class="btn btn-outline btn-sm btn-adjust-ending" style="padding:4px 12px; flex:unset; white-space:nowrap;">⏱ Adjust Ending</button>
+              </span>
+            </div>
+            
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%;">
+              <!-- Center Playable Raw Video -->
+              <div style="width: 100%; max-width: 320px; display: flex; flex-direction: column; align-items: center;">
+                <label class="form-label" style="margin-bottom:8px; align-self: flex-start;">Playable Raw Clip</label>
+                <video src="/api/preview/${jobId}/${clip.clip_name}_raw.mp4" preload="metadata" playsinline controls style="width: 100%; border-radius: var(--radius-md); background: #000; border: 1px solid var(--border-hi); aspect-ratio: 9/16; object-fit: contain; box-shadow: 0 8px 24px rgba(0,0,0,0.5);"></video>
+              </div>
+              
+              <!-- Review Inputs underneath -->
+              <div style="width: 100%; display: flex; flex-direction: column; gap: 16px;">
+                <div class="review-fields" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%;">
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">Clip Title</label>
+                    <input type="text" class="clip-title-input" value="${escHtml(clip.title || '')}" style="width:100%">
+                  </div>
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">Hook Phrase (Intro Kinetic Text & TTS)</label>
+                    <input type="text" class="clip-hook-input" value="${escHtml(clip.hook_phrase || clip.title || '')}" style="width:100%">
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0; display: flex; flex-direction: column; width: 100%;">
+                  <label class="form-label">Subtitle Text / Raw Captions</label>
+                  <textarea class="clip-text-textarea" style="width:100%; height: 180px; font-size:0.88rem; padding:12px; background:var(--surface-0); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-hi); line-height: 1.5; resize:vertical; font-family: inherit;">${escHtml(clip.transcript_text || '')}</textarea>
+                  <span class="hint-line" style="margin-top:4px">Make subtitles correction for minor issues here. They will be burned exactly as written.</span>
+                </div>
+              </div>
+            </div>
+          `;
+          container.appendChild(row);
+          const adjBtn = row.querySelector('.btn-adjust-ending');
+          if (adjBtn) adjBtn.onclick = () => openEndingModal(jobId, clip.clip_name, 'review');
+        });
+        
+        document.getElementById('btnSaveResume').onclick = async () => {
+          const btn = document.getElementById('btnSaveResume');
+          btn.disabled = true;
+          btn.textContent = '💾 Saving edits...';
+          saveResult.textContent = 'Saving changes to clips_plan.json...';
+          saveResult.className = 'test-msg';
+          
+          const editedClips = [];
+          container.querySelectorAll('.review-clip-row').forEach(row => {
+            editedClips.push({
+              clip_name: row.dataset.clipName,
+              title: row.querySelector('.clip-title-input').value.trim(),
+              hook_phrase: row.querySelector('.clip-hook-input').value.trim(),
+              transcript_text: row.querySelector('.clip-text-textarea').value.trim()
+            });
+          });
+          
+          try {
+            const saveRes = await fetch(`/api/clips-plan/${jobId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ clips: editedClips })
+            });
+            
+            const saveData = await saveRes.json();
+            if (!saveRes.ok || saveData.error) {
+              btn.disabled = false;
+              btn.textContent = '💾 Save & Resume Pipeline';
+              saveResult.textContent = '✗ Error saving: ' + (saveData.error || 'Server error');
+              saveResult.className = 'test-msg err';
+              return;
+            }
+            
+            saveResult.textContent = '💾 Edits saved! Triggering resumption...';
+            
+            const resumeRes = await fetch('/api/resume', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                job_folder: jobId,
+                resume_from: 'tts_hook',
+                selected_clips: 'all',
+                pause_before_captioning: false,
+                // Endings adjusted in this panel invalidated their raw clips;
+                // auto-rewind re-extracts them — reuse the framing templates
+                // so the template GUI doesn't relaunch over a frame nudge.
+                reuse_manual_templates: !!(window._endingsAdjusted && window._endingsAdjusted[jobId] && window._endingsAdjusted[jobId].size > 0)
+              })
+            });
+            
+            const resumeData = await resumeRes.json();
+            if (!resumeRes.ok || resumeData.error) {
+              btn.disabled = false;
+              btn.textContent = '💾 Save & Resume Pipeline';
+              saveResult.textContent = '✗ Error resuming: ' + (resumeData.error || 'Server error');
+              saveResult.className = 'test-msg err';
+              return;
+            }
+            
+            saveResult.textContent = '✓ Pipeline resumed!';
+            saveResult.className = 'test-msg ok';
+            window._currentJobId = resumeData.job_id;
+            showState('stateProcessing');
+            pollJob(resumeData.job_id);
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = '💾 Save & Resume Pipeline';
+            saveResult.textContent = '✗ Network error: ' + err.message;
+            saveResult.className = 'test-msg err';
+          }
+        };
+        
+        document.getElementById('btnCancelReview').onclick = () => {
+          showState('stateInput');
+        };
+        
+      } catch (e) {
+        container.innerHTML = '✗ Error: ' + e.message;
+      }
+    }
+
+    /* Render results */
+    function renderResults(results) {
+      if (!results) return;
+      const jobId = results._jobId || window._currentJobId;
+      document.getElementById('resultsVideoTitle').textContent = results.video_title || '';
+
+      const allClips = results.clips || [];
+      const reburnClips = results._reburnClips || 'all';
+      let clips = allClips;
+      if (reburnClips !== 'all') {
+        const allowed = reburnClips.split(',').map(s => s.trim().toLowerCase());
+        clips = allClips.filter(c => allowed.includes(c.clip_name.toLowerCase()));
+      }
+
+      document.getElementById('metaClips').textContent = clips.length + ' clips';
+
+      window._lastResultsJobId = jobId;
+      if (reburnClipSelect) {
+        reburnClipSelect.innerHTML = '<option value="all">All Clips</option>' + allClips
+          .map((clip) => `<option value="${clip.clip_name}">${clip.clip_name}</option>`)
+          .join('');
+      }
+      const avgDur   = clips.length ? Math.round(clips.reduce((a,c)=>a+(c.duration||0),0)/clips.length) : 0;
+      const avgScore = clips.length ? (clips.reduce((a,c)=>a+(c.virality_score||0),0)/clips.length).toFixed(1) : 0;
+      document.getElementById('metaDuration').textContent = 'avg ' + avgDur + 's';
+      document.getElementById('metaScore').textContent    = 'avg score ' + avgScore;
+
+      /* Blog post section */
+      const blogSection = document.getElementById('blogSection');
+      const blog = results.blog_post || {};
+      if (blog.word_count) {
+        blogSection.classList.remove('hidden');
+        blogSection.innerHTML = `
+          <div class="blog-card">
+            <div class="blog-card-title">📝 Blog Post Generated</div>
+            <div class="blog-card-meta">${blog.word_count} words</div>
+            <div class="blog-dl-row">
+              <a class="btn-dl" href="/api/blog/${jobId}?format=md" download>↓ Markdown (.md)</a>
+              <a class="btn-dl" href="/api/blog/${jobId}?format=txt" download style="background:var(--purple-glow);border-color:rgba(155,109,255,0.25);color:var(--purple)">↓ Plain Text (.txt)</a>
+            </div>
+          </div>`;
+      } else {
+        blogSection.classList.add('hidden');
+      }
+
+      const grid = document.getElementById('clipsGrid');
+      grid.innerHTML = '';
+      clips.forEach((clip, i) => {
+        const card = document.createElement('div');
+        card.className = 'clip-card';
+        const videoFile = clip.has_captioned ? clip.files.captioned : (clip.has_raw ? clip.files.raw : null);
+        const socialTitle = clip.social_title || '';
+        const socialDescription = clip.social_description || '';
+        const caption = clip.social_caption || '';
+        const hashtags = (clip.hashtags || []).join(' ');
+        const captionFailed = clip.caption_failed;
+        const variants = clip.caption_variants || [];
+        const variantLinks = variants.map(v =>
+          `<a class="btn-dl" href="/api/download/${jobId}/${v.file}" download>${escHtml(v.label || 'Variant')}</a>`
+        ).join('');
+        card.innerHTML = `
+          <div class="clip-thumb">
+            ${videoFile
+              ? `<video src="/api/preview/${jobId}/${videoFile}" preload="metadata" muted playsinline loop controls></video>`
+              : `<div class="clip-thumb-placeholder"><div class="clip-play-icon">▶</div><span class="clip-duration">${Math.round(clip.duration||0)}s</span></div>`}
+            <div class="clip-number-badge">CLIP ${String(clip.clip_name.match(/\d+/) ? clip.clip_name.match(/\d+/)[0] : (i+1)).padStart(2,'0')}</div>
+          </div>
+          <div class="clip-body">
+            <div class="clip-title">${escHtml(clip.title || 'Untitled Clip')}</div>
+            ${captionFailed ? '<div class="caption-fail-badge">⚠ Captioning failed (raw only)</div>' : ''}
+            <div class="scores-row">
+              <div class="score-badge score-hook">
+                <span class="score-label">Hook</span>
+                <span class="score-val">${clip.hook_score || 0}</span>
+              </div>
+              <div class="score-badge score-flow">
+                <span class="score-label">Flow</span>
+                <span class="score-val">${clip.flow_score || 0}</span>
+              </div>
+              <div class="score-badge score-total">
+                <span class="score-label">Viral</span>
+                <span class="score-val">${clip.virality_score || 0}</span>
+              </div>
+            </div>
+            ${clip.reason ? `<div class="clip-reason">${escHtml(clip.reason)}</div>` : ''}
+            ${(socialTitle || socialDescription || caption) ? `
+              <div class="caption-block">
+                <div class="caption-label">Social Copy</div>
+                ${socialTitle ? `<div class="caption-text" style="font-weight:800;margin-bottom:6px">${escHtml(socialTitle)}</div>` : ''}
+                ${socialDescription ? `<div style="font-size:0.78rem;color:var(--text-mid);line-height:1.5;margin-bottom:8px">${escHtml(socialDescription)}</div>` : ''}
+                ${caption ? `<div class="caption-text">${escHtml(caption)}</div>` : ''}
+                ${hashtags ? `<div style="margin-top:6px;font-size:0.75rem;color:var(--teal-dim)">${escHtml(hashtags)}</div>` : ''}
+              </div>` : ''}
+            <div class="clip-actions">
+              ${variantLinks || (clip.has_captioned ? `<a class="btn-dl" href="/api/download/${jobId}/${clip.files.captioned}" download>Captioned</a>` : '')}
+              ${clip.has_raw ? `<a class="btn-dl" href="/api/download/${jobId}/${clip.files.raw}" download style="background:var(--purple-glow);border-color:rgba(155,109,255,0.25);color:var(--purple)">↓ Raw</a>` : ''}
+              ${clip.has_hooked ? `<a class="btn-dl" href="/api/download/${jobId}/${clip.files.hooked}" download style="background:var(--purple-glow);border-color:rgba(155,109,255,0.25);color:var(--purple)">↓ Hooked Raw</a>` : ''}
+              ${clip.has_srt ? `<a class="btn-dl" href="/api/download/${jobId}/${clip.files.srt}" download style="background:var(--surface-2);border-color:var(--border);color:var(--text-mid)">↓ SRT</a>` : ''}
+              ${caption ? `<button class="btn-copy" onclick="navigator.clipboard.writeText(this.closest('.clip-body').querySelector('.caption-text').textContent);this.textContent='✓'">⎘</button>` : ''}
+            </div>
+          </div>`;
+        const actions = card.querySelector('.clip-actions');
+        if (actions && clip.has_ass) {
+          actions.insertAdjacentHTML('beforeend', `<a class="btn-dl" href="/api/download/${jobId}/${clip.files.ass}" download style="background:var(--surface-2);border-color:var(--border);color:var(--text-mid)">ASS</a>`);
+        }
+        
+        // Add Trim Button
+        if (actions && videoFile) {
+          const trimBtn = document.createElement('button');
+          trimBtn.className = 'btn-dl';
+          trimBtn.style.background = 'rgba(249,115,22,0.15)';
+          trimBtn.style.color = 'var(--accent-orange)';
+          trimBtn.style.borderColor = 'rgba(249,115,22,0.3)';
+          trimBtn.textContent = '✂️ Edit & Trim';
+          trimBtn.onclick = () => openTrimModal(jobId, clip.clip_name, videoFile);
+          actions.appendChild(trimBtn);
+        }
+
+        // Add Ending Adjust Button (frame-accurate end nudge + single-clip regen)
+        if (actions) {
+          const endBtn = document.createElement('button');
+          endBtn.className = 'btn-dl';
+          endBtn.style.background = 'rgba(45,212,191,0.12)';
+          endBtn.style.color = 'var(--teal)';
+          endBtn.style.borderColor = 'rgba(45,212,191,0.3)';
+          endBtn.textContent = '⏱ Adjust Ending';
+          endBtn.onclick = () => openEndingModal(jobId, clip.clip_name, 'results');
+          actions.appendChild(endBtn);
+        }
+        
+        grid.appendChild(card);
+      });
+    }
+
+    function escHtml(t) { const d=document.createElement('div'); d.textContent=t||''; return d.innerHTML; }
+
+    function errorRetryActions(jobId, data = {}) {
+      const message = data.message || 'Processing failed';
+      return `⚠ ${escHtml(message)}`;
+    }
+
+    async function retryJob(jobId, stage) {
+      const style = (reburnCaptionStyleSelect && reburnCaptionStyleSelect.value) || captionStyleSelect.value;
+      try {
+        const response = await fetch('/api/retry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_id: jobId,
+            resume_from: stage,
+            ai_provider: provider,
+            api_key: apiKeyInput.value.trim(),
+            ai_model: modelSelect.value,
+            get_all_clips: document.getElementById('clipCountAll').classList.contains('active'),
+            blog_post_enabled: blogPostEnabledInput.classList.contains('active'),
+            skip_copywriting: document.getElementById('skipCopywriting').classList.contains('active'),
+            skip_refinement: document.getElementById('skipRefinement').classList.contains('active'),
+            skip_stitch_pass: document.getElementById('skipStitch').classList.contains('active'),
+            refinement_batch_size: +document.getElementById('refinementBatchSize').value || 5,
+            skip_compression: document.getElementById('skipCompression').classList.contains('active'),
+            compression_batch_size: +document.getElementById('compressionBatchSize').value || 10,
+            analysis_window_seconds: +document.getElementById('analysisWindow').value || 900,
+            analysis_overlap_seconds: +document.getElementById('analysisOverlap').value || 180,
+            caption_style: style,
+            caption_font_size: +document.getElementById('reburnCaptionFontSize').value || +document.getElementById('captionFontSize').value || 165,
+            caption_output_suffix: style,
+            aspect_ratio: document.querySelector('.aspect-btn.active').dataset.ratio,
+            transcription_method: document.getElementById('transMethod').value,
+              smallest_key: document.getElementById('smallestKey').value.trim(),
+            tts_hook_enabled:     document.getElementById('ttsHookToggle').classList.contains('active'),
+            tts_hook_voice_id:    document.getElementById('ttsVoiceId').value,
+            tts_hook_sample_rate: +document.getElementById('ttsSampleRate').value,
+            tts_hook_speed:       +document.getElementById('ttsSpeed').value,
+            tts_hook_font_size_pct: +document.getElementById('ttsFontSize').value,
+            tts_hook_text_placement: document.getElementById('ttsPlacement').value,
+            tts_hook_text_color:    document.getElementById('ttsTextColor').value,
+            tts_hook_text_color_revealed: document.getElementById('ttsTextColorRevealed').value,
+            music_url: document.getElementById('musicUrl').value.trim(),
+            music_volume: (+musicVolumeInput.value || 0) / 100,
+          })
+        });
+        const data = await response.json();
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+        window._currentJobId = data.job_id;
+        document.getElementById('errorBanner').style.display = 'none';
+        pollJob(data.job_id);
+      } catch (e) {
+        alert('Retry failed: ' + e.message);
+      }
+    }
+
+    document.getElementById('btnReburn').addEventListener('click', async () => {
+      const el = document.getElementById('reburnResult');
+      const jobId = window._lastResultsJobId || window._currentJobId;
+      if (!jobId) {
+        el.textContent = 'No job loaded';
+        el.className = 'test-msg err';
+        return;
+      }
+      const style = reburnCaptionStyleSelect.value || captionStyleSelect.value;
+      el.textContent = 'Starting caption re-burn...';
+      el.className = 'test-msg';
+      try {
+        const reburnMusicUrlVal = document.getElementById('reburnMusicUrl').value.trim();
+        const reburnMusicVolumeVal = document.getElementById('reburnMusicVolume').value.trim();
+        const reburnMusicStartTimeVal = document.getElementById('reburnMusicStartTime').value.trim();
+
+        const response = await fetch('/api/reburn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_id: jobId,
+            selected_clips: reburnClipSelect.value || 'all',
+            caption_style: style,
+            caption_font_size: +document.getElementById('reburnCaptionFontSize').value || 165,
+            caption_output_suffix: style,
+            aspect_ratio: document.querySelector('.aspect-btn.active').dataset.ratio,
+            music_url: reburnMusicUrlVal || document.getElementById('musicUrl').value.trim(),
+            music_volume: reburnMusicVolumeVal !== '' ? (+reburnMusicVolumeVal || 0) / 100 : ((+musicVolumeInput.value || 0) / 100),
+            music_start_time: reburnMusicStartTimeVal !== '' ? +reburnMusicStartTimeVal : (document.getElementById('musicStartTime').value.trim() ? +document.getElementById('musicStartTime').value : null),
+          })
+        });
+        const data = await response.json();
+        if (data.error) {
+          el.textContent = data.error;
+          el.className = 'test-msg err';
+          return;
+        }
+        window._currentJobId = data.job_id;
+        showState('stateProcessing');
+        pollJob(data.job_id);
+      } catch (e) {
+        el.textContent = 'Connection error: ' + e.message;
+        el.className = 'test-msg err';
+      }
+    });
+
+    /* New job */
+    document.getElementById('btnNewJob').addEventListener('click', () => {
+      document.getElementById('videoUrl').value = '';
+      document.getElementById('musicUrl').value = '';
+      document.getElementById('musicFile').value = '';
+      btnProcess.disabled = true;
+      btnProcess.textContent = '⚡ Process Video';
+      document.getElementById('testResult').textContent = '';
+      document.getElementById('testResult').className = 'test-msg';
+      document.getElementById('testResult').style.display = 'none';
+      document.getElementById('clipsGrid').innerHTML = '';
+      document.getElementById('blogSection').classList.add('hidden');
+      resetProgressUi();
+      showState('stateInput');
+    });
+
+    /* Go Back — cancel the running job, stop polling, return to input */
+    document.getElementById('btnGoBack').addEventListener('click', async () => {
+      // Cancel the running job on the backend
+      const jobId = window._currentJobId;
+      if (jobId) {
+        try { await fetch(`/api/cancel/${jobId}`, { method: 'POST' }); } catch(e) {}
+      }
+      // Kill all polling / SSE
+      if (window._logInterval) { clearInterval(window._logInterval); window._logInterval = null; }
+      if (window._progressWatchdog) { clearInterval(window._progressWatchdog); window._progressWatchdog = null; }
+      // Re-enable the submit button
+      btnProcess.disabled = false;
+      btnProcess.textContent = '⚡ Process Video';
+      resetProgressUi();
+      showState('stateInput');
+    });
+
+    /* Log toggle */
+    document.getElementById('logToggle').addEventListener('click', () => {
+      const box = document.getElementById('logBox');
+      const tog = document.getElementById('logToggle');
+      const open = box.style.display === 'block';
+      box.style.display = open ? 'none' : 'block';
+      tog.textContent = open ? '▾ Show Debug Log' : '▴ Hide Debug Log';
+    });
+
+    /* Trim Modal Logic */
+    let trimJobId = '';
+    let trimClipName = '';
+    let trimFilename = '';
+    let keepSegments = [];
+    let markIn = null;
+    let markOut = null;
+    const trimModal = document.getElementById('trimModal');
+    const trimVideo = document.getElementById('trimVideo');
+    const trimSegmentsList = document.getElementById('trimSegmentsList');
+    const btnCloseTrim = document.getElementById('btnCloseTrim');
+    const btnExportTrim = document.getElementById('btnExportTrim');
+    const trimStatus = document.getElementById('trimStatus');
+
+    window.openTrimModal = (jobId, clipName, filename) => {
+      trimJobId = jobId;
+      trimClipName = clipName;
+      trimFilename = filename;
+      keepSegments = [];
+      markIn = null;
+      markOut = null;
+      trimStatus.style.display = 'none';
+      document.getElementById('btnTrimMarkIn').textContent = '[ : Mark IN';
+      document.getElementById('btnTrimMarkOut').textContent = '] : Mark OUT';
+      renderSegmentsList();
+      
+      trimVideo.src = `/api/preview/${jobId}/${filename}`;
+      trimModal.classList.add('open');
+      trimVideo.play();
+    };
+
+    btnCloseTrim.onclick = () => {
+      trimModal.classList.remove('open');
+      trimVideo.pause();
+      trimVideo.src = '';
+    };
+
+    trimVideo.addEventListener('timeupdate', () => {
+      document.getElementById('trimCurrentTime').textContent = trimVideo.currentTime.toFixed(2);
+      document.getElementById('trimTotalTime').textContent = trimVideo.duration ? trimVideo.duration.toFixed(2) : '0.00';
+    });
+
+    const addSegment = (start, end) => {
+      if (start >= end) {
+        alert("Mark OUT must be after Mark IN!");
+        return;
+      }
+      keepSegments.push([start, end]);
+      keepSegments.sort((a, b) => a[0] - b[0]);
+      markIn = null;
+      markOut = null;
+      renderSegmentsList();
+    };
+
+    const renderSegmentsList = () => {
+      trimSegmentsList.innerHTML = '';
+      if (keepSegments.length === 0) {
+        trimSegmentsList.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem;">Kept Segments: (Add a segment to start cutting)</div>';
+        return;
+      }
+      keepSegments.forEach((seg, i) => {
+        const item = document.createElement('div');
+        item.className = 'trim-segment-item';
+        item.innerHTML = `
+          <span>Segment ${i+1}: <strong>${seg[0].toFixed(2)}s</strong> ➔ <strong>${seg[1].toFixed(2)}s</strong></span>
+          <button onclick="removeSegment(${i})">Delete</button>
+        `;
+        trimSegmentsList.appendChild(item);
+      });
+    };
+
+    window.removeSegment = (index) => {
+      keepSegments.splice(index, 1);
+      renderSegmentsList();
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (!trimModal.classList.contains('open')) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (trimVideo.paused) trimVideo.play(); else trimVideo.pause();
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        trimVideo.currentTime += 0.033;
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        trimVideo.currentTime -= 0.033;
+      } else if (e.key === '[') {
+        e.preventDefault();
+        markIn = trimVideo.currentTime;
+        document.getElementById('btnTrimMarkIn').textContent = `[ : Mark IN (${markIn.toFixed(2)}s)`;
+      } else if (e.key === ']') {
+        e.preventDefault();
+        markOut = trimVideo.currentTime;
+        document.getElementById('btnTrimMarkOut').textContent = `] : Mark OUT (${markOut.toFixed(2)}s)`;
+      } else if (e.code === 'Enter') {
+        e.preventDefault();
+        if (markIn !== null && markOut !== null) {
+          addSegment(markIn, markOut);
+          document.getElementById('btnTrimMarkIn').textContent = '[ : Mark IN';
+          document.getElementById('btnTrimMarkOut').textContent = '] : Mark OUT';
+        }
+      }
+    });
+
+    document.getElementById('btnTrimPlayPause').onclick = () => { if (trimVideo.paused) trimVideo.play(); else trimVideo.pause(); };
+    document.getElementById('btnTrimLeft').onclick = () => trimVideo.currentTime -= 0.033;
+    document.getElementById('btnTrimRight').onclick = () => trimVideo.currentTime += 0.033;
+    document.getElementById('btnTrimMarkIn').onclick = () => {
+      markIn = trimVideo.currentTime;
+      document.getElementById('btnTrimMarkIn').textContent = `[ : Mark IN (${markIn.toFixed(2)}s)`;
+    };
+    document.getElementById('btnTrimMarkOut').onclick = () => {
+      markOut = trimVideo.currentTime;
+      document.getElementById('btnTrimMarkOut').textContent = `] : Mark OUT (${markOut.toFixed(2)}s)`;
+    };
+    document.getElementById('btnTrimAdd').onclick = () => {
+      if (markIn !== null && markOut !== null) {
+        addSegment(markIn, markOut);
+        document.getElementById('btnTrimMarkIn').textContent = '[ : Mark IN';
+        document.getElementById('btnTrimMarkOut').textContent = '] : Mark OUT';
+      }
+    };
+
+    btnExportTrim.onclick = async () => {
+      if (keepSegments.length === 0) {
+        alert("Please add at least one segment to keep!");
+        return;
+      }
+      btnExportTrim.disabled = true;
+      btnExportTrim.textContent = '⏳ Trimming video... Please wait.';
+      trimStatus.style.display = 'block';
+      trimStatus.className = 'test-msg';
+      trimStatus.textContent = 'Processing clip...';
+
+      try {
+        const response = await fetch('/api/trim-clip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_id: trimJobId,
+            filename: trimFilename,
+            keep_segments: keepSegments,
+            transition: document.getElementById('trimTransition').value
+          })
+        });
+        const data = await response.json();
+        
+        btnExportTrim.disabled = false;
+        btnExportTrim.textContent = 'Export Trimmed Clip';
+        
+        if (data.error) {
+          trimStatus.textContent = '✗ ' + data.error;
+          trimStatus.className = 'test-msg err';
+        } else if (data.success) {
+          trimStatus.textContent = '✓ Trim successful! Downloading...';
+          trimStatus.className = 'test-msg ok';
+          
+          const a = document.createElement('a');
+          a.href = `/api/download/${trimJobId}/${data.trimmed_filename}`;
+          a.download = '';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          
+          setTimeout(() => {
+            btnCloseTrim.click();
+          }, 2000);
+        }
+      } catch (err) {
+        btnExportTrim.disabled = false;
+        btnExportTrim.textContent = 'Export Trimmed Clip';
+        trimStatus.textContent = '✗ Connection error: ' + err.message;
+        trimStatus.className = 'test-msg err';
+      }
+    };
+
+    /* ── Ending Adjust Modal (frame-accurate clip end + single-clip regen) ── */
+    let endingCtx = null;                                 // {jobId, clipName, meta, mode}
+    window._endingsAdjusted = window._endingsAdjusted || {};  // jobId -> Set(clip_name) pending regen
+    const endingModal = document.getElementById('endingModal');
+    const endingVideo = document.getElementById('endingVideo');
+    const endingSlider = document.getElementById('endingSlider');
+    const endingStatus = document.getElementById('endingStatus');
+
+    const endingFrameDur = () => (endingCtx && endingCtx.meta.fps > 0) ? 1 / endingCtx.meta.fps : 1 / 30;
+    const endingAbsTime = () => endingCtx ? endingCtx.meta.snippet_start + endingVideo.currentTime : 0;
+
+    function endingUpdateReadout() {
+      if (!endingCtx) return;
+      const m = endingCtx.meta;
+      const abs = endingAbsTime();
+      document.getElementById('endingCurTime').textContent = abs.toFixed(3);
+      const deltaS = abs - m.current_end;
+      const frames = Math.round(deltaS * (m.fps || 30));
+      const el = document.getElementById('endingDelta');
+      el.textContent = `Δ ${deltaS >= 0 ? '+' : ''}${deltaS.toFixed(3)}s (${frames >= 0 ? '+' : ''}${frames} frames vs current end)`;
+      el.style.color = Math.abs(deltaS) < 0.001 ? 'var(--text-muted)' : 'var(--teal)';
+      endingSlider.value = endingVideo.currentTime;
+    }
+
+    window.openEndingModal = async (jobId, clipName, mode) => {
+      // mode: 'results' → Save & Regenerate available; 'review' → save only
+      // (the review panel's Save & Resume re-extracts adjusted clips itself).
+      endingStatus.style.display = 'none';
+      document.getElementById('endingInfo').textContent = '⏳ Building frame-accurate preview from the source video…';
+      endingCtx = null;
+      endingVideo.removeAttribute('src');
+      endingModal.classList.add('open');
+      document.getElementById('btnEndingSaveRegen').style.display = (mode === 'results') ? '' : 'none';
+      try {
+        const r = await fetch(`/api/ending-preview/${jobId}/${clipName}`);
+        const meta = await r.json();
+        if (!r.ok || meta.error) throw new Error(meta.error || r.statusText);
+        endingCtx = { jobId, clipName, meta, mode };
+        endingSlider.min = 0;
+        endingSlider.max = (meta.snippet_end - meta.snippet_start).toFixed(3);
+        endingSlider.step = (meta.fps > 0 ? 1 / meta.fps : 1 / 30).toFixed(4);
+        const span = meta.snippet_end - meta.snippet_start;
+        const markerPct = span > 0 ? ((meta.current_end - meta.snippet_start) / span) * 100 : 0;
+        document.getElementById('endingMarker').style.left = `${Math.max(0, Math.min(100, markerPct))}%`;
+        document.getElementById('endingInfo').innerHTML =
+          `<strong>${clipName}</strong> — current end at <strong>${meta.current_end.toFixed(3)}s</strong> (orange marker). ` +
+          `Scrub or frame-step to the exact frame where the words should end, then save. ` +
+          `fps ${meta.fps.toFixed(3)} · window ${meta.snippet_start.toFixed(2)}s → ${meta.snippet_end.toFixed(2)}s` +
+          (meta.segment_count > 1 ? ` · multi-segment clip: only the LAST segment's end moves.` : '');
+        endingVideo.onloadedmetadata = () => {
+          endingVideo.currentTime = Math.max(0, meta.current_end - meta.snippet_start);
+        };
+        endingVideo.src = meta.url;
+      } catch (err) {
+        document.getElementById('endingInfo').textContent = '✗ ' + err.message;
+      }
+    };
+
+    function closeEndingModal() {
+      endingModal.classList.remove('open');
+      endingVideo.pause();
+      endingVideo.removeAttribute('src');
+      endingCtx = null;
+    }
+    document.getElementById('btnCloseEnding').onclick = closeEndingModal;
+
+    const endingStep = (n) => {
+      if (!endingCtx) return;
+      endingVideo.pause();
+      const limit = isFinite(endingVideo.duration) ? endingVideo.duration : 1e9;
+      endingVideo.currentTime = Math.max(0, Math.min(limit, endingVideo.currentTime + n * endingFrameDur()));
+    };
+    document.getElementById('btnEndingPlayPause').onclick = () => { endingVideo.paused ? endingVideo.play() : endingVideo.pause(); };
+    document.getElementById('btnEndingM5').onclick = () => endingStep(-5);
+    document.getElementById('btnEndingM1').onclick = () => endingStep(-1);
+    document.getElementById('btnEndingP1').onclick = () => endingStep(1);
+    document.getElementById('btnEndingP5').onclick = () => endingStep(5);
+    document.getElementById('btnEndingReset').onclick = () => {
+      if (!endingCtx) return;
+      endingVideo.pause();
+      endingVideo.currentTime = Math.max(0, endingCtx.meta.current_end - endingCtx.meta.snippet_start);
+    };
+    endingVideo.addEventListener('timeupdate', endingUpdateReadout);
+    endingVideo.addEventListener('seeked', endingUpdateReadout);
+    endingSlider.addEventListener('input', () => {
+      endingVideo.pause();
+      endingVideo.currentTime = parseFloat(endingSlider.value) || 0;
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (!endingModal.classList.contains('open')) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.code === 'Space') { e.preventDefault(); endingVideo.paused ? endingVideo.play() : endingVideo.pause(); }
+      else if (e.code === 'ArrowRight') { e.preventDefault(); endingStep(e.shiftKey ? 5 : 1); }
+      else if (e.code === 'ArrowLeft') { e.preventDefault(); endingStep(e.shiftKey ? -5 : -1); }
+    });
+
+    async function endingSave(regen) {
+      if (!endingCtx) return;
+      const { jobId, clipName, meta, mode } = endingCtx;
+      const newEnd = endingAbsTime();
+      endingStatus.style.display = 'block';
+      if (newEnd < meta.min_end) {
+        endingStatus.className = 'test-msg err';
+        endingStatus.textContent = `✗ Too early — the last segment must keep at least 1s (min end ${meta.min_end.toFixed(3)}s).`;
+        return;
+      }
+      const btnS = document.getElementById('btnEndingSave');
+      const btnR = document.getElementById('btnEndingSaveRegen');
+      btnS.disabled = btnR.disabled = true;
+      endingStatus.className = 'test-msg';
+      endingStatus.textContent = regen ? 'Saving new ending & starting regeneration…' : 'Saving new ending…';
+
+      const pending = (window._endingsAdjusted[jobId] = window._endingsAdjusted[jobId] || new Set());
+      const regenClips = regen ? Array.from(new Set([...pending, clipName])).join(',') : '';
+
+      try {
+        const r = await fetch('/api/adjust-ending', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_id: jobId, clip_name: clipName, new_end: newEnd,
+            regenerate: !!regen, regen_clips: regenClips
+          })
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || r.statusText);
+
+        if (regen) {
+          pending.clear();
+          endingStatus.className = 'test-msg ok';
+          endingStatus.textContent = `✓ Saved ${d.old_end.toFixed(3)}s → ${d.new_end.toFixed(3)}s. Regenerating ${regenClips} (re-extract + re-caption, everything else untouched)…`;
+          setTimeout(() => {
+            closeEndingModal();
+            window._currentJobId = d.regen_job_id;
+            showState('stateProcessing');
+            pollJob(d.regen_job_id);
+          }, 1200);
+        } else {
+          if (d.changed) pending.add(clipName);
+          endingStatus.className = 'test-msg ok';
+          endingStatus.textContent = d.changed
+            ? `✓ Saved: ${d.old_end.toFixed(3)}s → ${d.new_end.toFixed(3)}s (clip now ${Number(d.total_duration).toFixed(1)}s). ` +
+              (mode === 'review'
+                ? 'It re-extracts automatically on Save & Resume.'
+                : `Pending regeneration: ${Array.from(pending).join(', ')} — use Save & Regenerate on the last one to run them all.`)
+            : '✓ No change — ending kept as-is.';
+          if (mode === 'review' && d.changed) {
+            const row = document.querySelector(`#reviewClipsContainer .review-clip-row[data-clip-name="${clipName}"]`);
+            const badge = row && row.querySelector('.review-time-badge');
+            if (badge) badge.textContent = `⏱ adjusted → ends ${d.new_end.toFixed(2)}s (${Number(d.total_duration).toFixed(1)}s)`;
+          }
+          setTimeout(closeEndingModal, 1800);
+        }
+      } catch (err) {
+        endingStatus.className = 'test-msg err';
+        endingStatus.textContent = '✗ ' + err.message;
+      } finally {
+        btnS.disabled = btnR.disabled = false;
+      }
+    }
+    document.getElementById('btnEndingSave').onclick = () => endingSave(false);
+    document.getElementById('btnEndingSaveRegen').onclick = () => endingSave(true);
+  </script>
+  <!-- Trim Modal -->
+  <div class="trim-modal" id="trimModal">
+    <div class="trim-modal-content">
+      <div class="trim-header">
+        <h2>✂️ Edit & Trim Clip</h2>
+        <button class="close-modal" id="btnCloseTrim">×</button>
+      </div>
+      <div class="trim-video-container">
+        <video id="trimVideo" controls playsinline></video>
+        <div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; margin-top: 8px;">
+          <span id="trimCurrentTime">0.00</span>s / <span id="trimTotalTime">0.00</span>s
+        </div>
+      </div>
+      <div class="trim-controls">
+        <button class="btn btn-outline btn-sm" id="btnTrimPlayPause">Space : Play/Pause</button>
+        <button class="btn btn-outline btn-sm" id="btnTrimLeft">← : -1 Frame</button>
+        <button class="btn btn-outline btn-sm" id="btnTrimRight">→ : +1 Frame</button>
+        <button class="btn btn-primary btn-sm" style="flex:unset; padding: 8px 16px;" id="btnTrimMarkIn">[ : Mark IN</button>
+        <button class="btn btn-primary btn-sm" style="flex:unset; padding: 8px 16px;" id="btnTrimMarkOut">] : Mark OUT</button>
+        <button class="btn btn-outline btn-sm" style="border-color: var(--accent-green); color: var(--accent-green);" id="btnTrimAdd">Enter : Add Segment</button>
+      </div>
+      <div class="trim-segments-list" id="trimSegmentsList">
+        <div style="color: var(--text-secondary); font-size: 0.85rem;">Kept Segments: (Add a segment to start cutting)</div>
+        <!-- Segments go here -->
+      </div>
+      <div style="display: flex; gap: 16px; margin-top: 16px; align-items: flex-end;">
+        <div style="flex: 1;">
+          <label style="display:block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 6px;">Cut Transition</label>
+          <select id="trimTransition">
+            <option value="sharp">Sharp Cut (Fastest)</option>
+            <option value="crossfade">Smooth Crossfade</option>
+          </select>
+        </div>
+        <div style="flex: 2;">
+          <button class="btn btn-primary" id="btnExportTrim" style="width: 100%;">Export Trimmed Clip</button>
+        </div>
+      </div>
+      <div id="trimStatus" class="test-msg" style="display: none; margin-top: 0;"></div>
+    </div>
+  </div>
+
+  <!-- Ending Adjust Modal (frame-accurate clip end + single-clip regeneration) -->
+  <div class="trim-modal" id="endingModal">
+    <div class="trim-modal-content">
+      <div class="trim-header">
+        <h2>⏱ Adjust Clip Ending</h2>
+        <button class="close-modal" id="btnCloseEnding">×</button>
+      </div>
+      <div class="trim-video-container">
+        <video id="endingVideo" controls playsinline></video>
+        <div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; margin-top: 8px;">
+          Source time: <span id="endingCurTime">0.000</span>s
+          <span id="endingDelta" style="margin-left: 12px;"></span>
+        </div>
+      </div>
+      <div style="position: relative; margin: 14px 2px 4px;">
+        <input type="range" id="endingSlider" min="0" max="1" step="0.001" value="0" style="width: 100%; display: block;">
+        <div id="endingMarker" title="Current ending" style="position: absolute; top: -6px; width: 2px; height: 30px; background: var(--accent-orange); pointer-events: none; box-shadow: 0 0 6px rgba(249,115,22,0.8);"></div>
+      </div>
+      <div class="trim-controls">
+        <button class="btn btn-outline btn-sm" id="btnEndingPlayPause">Space : Play/Pause</button>
+        <button class="btn btn-outline btn-sm" id="btnEndingM5">⇧← : -5 Frames</button>
+        <button class="btn btn-outline btn-sm" id="btnEndingM1">← : -1 Frame</button>
+        <button class="btn btn-outline btn-sm" id="btnEndingP1">→ : +1 Frame</button>
+        <button class="btn btn-outline btn-sm" id="btnEndingP5">⇧→ : +5 Frames</button>
+        <button class="btn btn-outline btn-sm" id="btnEndingReset">Jump to Current End</button>
+      </div>
+      <div id="endingInfo" style="font-size: 0.85rem; color: var(--text-mid); margin-top: 10px; line-height: 1.6;"></div>
+      <div style="display: flex; gap: 12px; margin-top: 14px;">
+        <button class="btn btn-outline" id="btnEndingSave" style="flex: 1;">💾 Save New Ending</button>
+        <button class="btn btn-primary" id="btnEndingSaveRegen" style="flex: 2;">💾 Save & Regenerate Clip</button>
+      </div>
+      <div id="endingStatus" class="test-msg" style="display: none; margin-top: 10px;"></div>
+    </div>
+  </div>
+
+</body>
+</html>

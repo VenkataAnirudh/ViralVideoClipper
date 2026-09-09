@@ -1,0 +1,197 @@
+/* ============================================================================
+   Clip Branding Studio — restyled to match the main Video Clipper dashboard.
+   Self-contained: same design tokens + components as templates/index.html.
+   ========================================================================== */
+
+:root{
+  --black:#07070A; --surface-0:#0D0D12; --surface-1:#121219; --surface-2:#19191F; --surface-3:#222229;
+  --border:rgba(255,255,255,0.06); --border-hi:rgba(255,255,255,0.12);
+  --teal:#00E5C0; --teal-dim:#00B89A; --teal-glow:rgba(0,229,192,0.15);
+  --orange:#FF5F1F; --orange-dim:#CC4C19; --orange-glow:rgba(255,95,31,0.15);
+  --purple:#9B6DFF;
+  --text-hi:#F2F2F7; --text-mid:#9999AA; --text-low:#55555F;
+  --radius-sm:8px; --radius-md:14px; --radius-lg:20px;
+  --font-head:'Syne',sans-serif; --font-body:'Outfit',sans-serif; --font-mono:'DM Mono',monospace;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--black); color:var(--text-hi);
+  font-family:var(--font-body); font-size:15px; line-height:1.6; min-height:100vh;
+}
+a{color:var(--teal)}
+code{font-family:var(--font-mono); font-size:0.82em; color:var(--text-mid)}
+hr{border:none; border-top:1px solid var(--border); margin:16px 0}
+
+/* ── Top bar ───────────────────────────────────────────────────────────── */
+.topbar{
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:14px 22px; background:rgba(7,7,10,0.92); backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex; align-items:center; gap:12px}
+.brand .icon-chip{width:34px; height:34px; font-size:18px}
+.brand .t{display:flex; flex-direction:column; line-height:1.1}
+.brand .t b{font-family:var(--font-head); font-size:1rem; font-weight:800; letter-spacing:-.01em}
+.badge{
+  display:inline-flex; align-items:center; gap:6px;
+  font-family:var(--font-mono); font-size:9px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--teal); background:rgba(0,229,192,0.08); border:1px solid rgba(0,229,192,0.2);
+  border-radius:100px; padding:3px 10px;
+}
+.badge::before{content:''; width:5px; height:5px; border-radius:50%; background:var(--teal);
+  animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+.spacer{flex:1}
+.topbar select{width:auto; min-width:200px; padding:9px 34px 9px 12px; font-size:0.82rem}
+.topbar select#jobSel{min-width:300px}
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+.wrap{
+  display:grid; grid-template-columns:minmax(380px,1fr) minmax(440px,1.05fr);
+  gap:18px; padding:20px 22px 80px; max-width:1640px; margin:0 auto;
+}
+@media(max-width:1120px){ .wrap{grid-template-columns:1fr} }
+.col{display:flex; flex-direction:column; gap:16px}
+
+/* ── Cards ─────────────────────────────────────────────────────────────── */
+.card{
+  background:var(--surface-1); border:1px solid var(--border); border-radius:var(--radius-lg);
+  padding:22px; transition:border-color .25s;
+}
+.card:hover{border-color:var(--border-hi)}
+.card-hd{
+  display:flex; align-items:center; gap:10px;
+  font-family:var(--font-head); font-size:0.82rem; font-weight:700;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--text-mid); margin-bottom:18px;
+}
+.card-hd .icon-chip{display:grid; place-items:center; width:30px; height:30px; border-radius:8px;
+  background:var(--surface-3); font-size:14px}
+.card-hd .count{margin-left:auto; font-family:var(--font-mono)}
+
+/* card-level enable switch lives in the header */
+.hd-toggle{margin-left:auto}
+
+/* ── Form elements ─────────────────────────────────────────────────────── */
+.form-label{
+  display:block; font-size:0.72rem; font-family:var(--font-mono); letter-spacing:.06em;
+  text-transform:uppercase; color:var(--text-low); margin-bottom:7px;
+}
+input[type=text],input[type=url],input[type=number],input[type=file],input[type=color],select{
+  width:100%; padding:11px 14px; background:var(--surface-0); border:1px solid var(--border);
+  border-radius:var(--radius-sm); color:var(--text-hi); font-family:var(--font-body);
+  font-size:0.88rem; outline:none; transition:border-color .2s, box-shadow .2s; appearance:none;
+}
+input:focus,select:focus{border-color:var(--teal-dim); box-shadow:0 0 0 3px rgba(0,229,192,0.09)}
+input[type=color]{padding:4px; height:42px; cursor:pointer}
+input[type=file]::file-selector-button{
+  margin-right:12px; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius-sm);
+  background:var(--surface-2); color:var(--text-mid); font-family:var(--font-mono);
+  font-size:0.7rem; text-transform:uppercase; cursor:pointer;
+}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2355555F' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; cursor:pointer}
+select option{background:var(--surface-2)}
+.field{margin-bottom:14px}
+.field:last-child{margin-bottom:0}
+.row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.row3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px}
+.uprow{display:flex; gap:8px; align-items:center}
+.uprow input[type=text]{flex:1}
+.hint{font-family:var(--font-mono); font-size:0.7rem; line-height:1.5; color:var(--text-low); margin-top:8px}
+
+/* ── Range sliders ─────────────────────────────────────────────────────── */
+.range-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:7px}
+.range-val{font-family:var(--font-mono); font-size:0.76rem; color:var(--teal);
+  background:rgba(0,229,192,0.08); padding:2px 9px; border-radius:100px}
+input[type=range]{width:100%; accent-color:var(--teal); cursor:pointer; height:4px}
+
+/* ── Checkbox toggles ──────────────────────────────────────────────────── */
+.chk{display:flex; align-items:center; gap:9px; cursor:pointer; font-size:0.86rem;
+  color:var(--text-hi); user-select:none}
+.chk input[type=checkbox]{
+  appearance:none; -webkit-appearance:none; flex-shrink:0;
+  width:38px; height:21px; border-radius:100px; background:var(--surface-3);
+  border:1px solid var(--border); position:relative; cursor:pointer; transition:all .25s;
+}
+.chk input[type=checkbox]::after{content:''; position:absolute; top:1px; left:1px;
+  width:17px; height:17px; border-radius:50%; background:var(--text-low); transition:all .25s}
+.chk input[type=checkbox]:checked{background:rgba(0,229,192,0.25); border-color:rgba(0,229,192,0.5)}
+.chk input[type=checkbox]:checked::after{left:18px; background:var(--teal); box-shadow:0 0 8px var(--teal-glow)}
+.chk.sm{font-size:0.78rem}
+.chk.sm input[type=checkbox]{width:32px; height:18px}
+.chk.sm input[type=checkbox]::after{width:14px; height:14px}
+.chk.sm input[type=checkbox]:checked::after{left:15px}
+.chk-grid{display:flex; flex-wrap:wrap; gap:10px 18px}
+
+/* ── Advanced disclosure ───────────────────────────────────────────────── */
+details.adv{margin-top:14px; border-top:1px dashed var(--border); padding-top:12px}
+details.adv>summary{
+  cursor:pointer; list-style:none; font-family:var(--font-mono); font-size:0.7rem;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--text-low);
+}
+details.adv>summary::-webkit-details-marker{display:none}
+details.adv>summary::before{content:'▸ '; color:var(--teal)}
+details.adv[open]>summary::before{content:'▾ '}
+details.adv .body{padding-top:14px; display:flex; flex-direction:column; gap:14px}
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.btn{font-family:var(--font-mono); font-size:0.8rem; letter-spacing:.04em; font-weight:500;
+  border-radius:var(--radius-sm); padding:11px 18px; cursor:pointer; transition:all .2s; border:1px solid transparent}
+.btn-primary{background:var(--teal); color:#04201b; border-color:var(--teal); font-weight:700}
+.btn-primary:hover{background:#1bf0cf; box-shadow:0 0 18px var(--teal-glow)}
+.btn-orange{background:var(--orange); color:#1c0b04; border-color:var(--orange); font-weight:700}
+.btn-orange:hover{background:#ff7a44; box-shadow:0 0 18px var(--orange-glow)}
+.btn-ghost{background:var(--surface-2); color:var(--text-mid); border-color:var(--border-hi)}
+.btn-ghost:hover{border-color:var(--teal-dim); color:var(--teal)}
+.btn:disabled{opacity:.45; cursor:not-allowed; box-shadow:none}
+.btnrow{display:flex; gap:10px; flex-wrap:wrap}
+
+/* ── Bulk toolbar ──────────────────────────────────────────────────────── */
+.bulkbar{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:12px; background:var(--surface-0); border:1px solid var(--border);
+  border-radius:var(--radius-md); margin-bottom:14px}
+.bulkbar .seg{display:flex; gap:6px}
+.tbtn{font-family:var(--font-mono); font-size:0.72rem; letter-spacing:.04em; padding:7px 13px;
+  border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface-2);
+  color:var(--text-mid); cursor:pointer; transition:all .2s; white-space:nowrap}
+.tbtn:hover{border-color:var(--border-hi); color:var(--text-hi)}
+.pill{font-family:var(--font-mono); font-size:0.72rem; padding:3px 10px; border-radius:100px;
+  border:1px solid var(--border); color:var(--text-mid)}
+.pill.on{color:var(--teal); border-color:rgba(0,229,192,0.35); background:rgba(0,229,192,0.08)}
+
+/* apply-to-selected panel */
+.applybox{padding:12px; background:var(--surface-0); border:1px dashed var(--border-hi);
+  border-radius:var(--radius-md); margin-bottom:14px; display:none}
+.applybox.show{display:block}
+.applybox .lab{font-family:var(--font-mono); font-size:0.68rem; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--text-low); margin-bottom:10px}
+
+/* ── Clip gallery ──────────────────────────────────────────────────────── */
+.clips{display:flex; flex-direction:column; gap:12px; max-height:74vh; overflow:auto; padding-right:6px}
+.clip{display:grid; grid-template-columns:24px 132px 1fr; gap:12px;
+  background:var(--surface-0); border:1px solid var(--border); border-radius:var(--radius-md);
+  padding:12px; transition:border-color .2s, background .2s}
+.clip.sel{border-color:rgba(0,229,192,0.45); background:rgba(0,229,192,0.04)}
+.clip .selbox{display:flex; align-items:flex-start; padding-top:2px}
+.clip .selbox input{width:18px; height:18px; accent-color:var(--teal); cursor:pointer}
+.clip video{width:132px; border-radius:8px; background:#000; aspect-ratio:9/16; object-fit:cover}
+.clip .meta{min-width:0}
+.clip .meta .nm{display:flex; align-items:center; gap:8px; margin-bottom:8px}
+.clip .meta .nm b{font-size:0.9rem}
+.clip .meta .form-label{margin-bottom:5px}
+.clip .ctrls{display:flex; flex-wrap:wrap; gap:8px 14px; margin:8px 0}
+.clip .ovr{display:grid; grid-template-columns:1fr 64px 64px; gap:6px; margin-top:6px}
+.clip .ovr input{font-size:0.78rem; padding:7px 9px}
+.clip .bantxt{color:var(--orange); font-weight:600}
+
+/* ── Progress + log ────────────────────────────────────────────────────── */
+.progress{height:10px; background:var(--surface-0); border:1px solid var(--border);
+  border-radius:6px; overflow:hidden; margin-top:4px}
+.progress>div{height:100%; width:0; background:linear-gradient(90deg,var(--teal),var(--purple));
+  transition:width .3s}
+.progtext{font-family:var(--font-mono); font-size:0.72rem; color:var(--text-mid); margin-top:8px}
+.log{font-family:var(--font-mono); font-size:0.72rem; line-height:1.5; background:var(--surface-0);
+  border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px; height:140px;
+  overflow:auto; color:var(--text-low); white-space:pre-wrap; margin-top:10px}
